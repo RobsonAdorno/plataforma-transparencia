@@ -154,5 +154,7 @@ def saude():
         return {"fontes": fontes, "volumes": cur.fetchone()}
 
 
-from .web import router as _web   # noqa: E402  (evita import circular)
+from .web import router as _web      # noqa: E402  (evita import circular)
+from .admin import router as _admin  # noqa: E402
 app.include_router(_web)
+app.include_router(_admin)

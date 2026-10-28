@@ -146,6 +146,21 @@ def cmd_alertas(args):
         print(json.dumps(alertas.enviar(args.id), ensure_ascii=False, indent=1))
 
 
+
+def cmd_importar(args):
+    from . import importador
+    rel = importador.processa(args.entidade, args.arquivo, args.ator,
+                              confirmar=args.confirmar)
+    print(json.dumps(rel.resumo(), ensure_ascii=False, indent=1))
+    if not args.confirmar and not rel.erros:
+        print("\n  simulação apenas. Repita com --confirmar para gravar.")
+
+
+def cmd_reverter(args):
+    from . import importador
+    print(json.dumps(importador.reverte(args.lote, args.ator), ensure_ascii=False, indent=1))
+
+
 def main(argv=None):
     p = argparse.ArgumentParser(prog="plataforma")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -165,6 +180,13 @@ def main(argv=None):
     al.add_argument("--estado", default="rascunho")
     al.add_argument("--id", type=int)
     al.set_defaults(func=cmd_alertas)
+    im = sub.add_parser("importar")
+    im.add_argument("--entidade", required=True); im.add_argument("--arquivo", required=True)
+    im.add_argument("--ator", default="cli"); im.add_argument("--confirmar", action="store_true")
+    im.set_defaults(func=cmd_importar)
+    rv = sub.add_parser("reverter")
+    rv.add_argument("--lote", required=True); rv.add_argument("--ator", default="cli")
+    rv.set_defaults(func=cmd_reverter)
     c = sub.add_parser("resolve"); c.add_argument("--ano", type=int, default=2022)
     c.set_defaults(func=cmd_resolve)
 

@@ -5,7 +5,7 @@ dinheiro público — a partir das fontes oficiais.
 
 Arquitetura e decisões: https://claude.ai/artifact/CqwwuhRpr44FmD6G8MhBoC
 
-## Estado atual — Fases 0, 1 e 2
+## Estado atual — Fases 0 a 3
 
 Pipeline completo, carregando em PostgreSQL:
 
@@ -18,6 +18,7 @@ Pipeline completo, carregando em PostgreSQL:
 | Proposições | 5.887, 100% das votações com matéria vinculada |
 | Agenda | 78 eventos, 403 itens de pauta |
 | Alertas | 78 rascunhos a partir de 10 meses — cerca de 2 por semana |
+| Entes | 1 união, 27 estados, 5.570 municípios |
 
 **513 de 513 deputados ligados ao TSE**, sendo 511 por CPF e 2 por nome dentro
 da mesma UF. Fila de revisão vazia.
@@ -124,7 +125,52 @@ para plenário, votação nominal, placar apertado e watchlist. Abaixo de 40 nã
 vira nem rascunho. Requerimento é descartado por padrão — é ruído de tramitação,
 e é o que mais aparece na pauta.
 
+## Painel de administração
+
+Três superfícies, não uma.
+
+**Importador de CSV.** Para quem opera sozinho, planilha ganha de qualquer tela
+de cadastro. Simula, mostra o diff, grava com número de lote e desfaz por
+inteiro:
+
+```bash
+./.venv/bin/python -m plataforma.cli importar --entidade competencia \
+    --arquivo templates/competencia.csv                 # simula
+./.venv/bin/python -m plataforma.cli importar --entidade competencia \
+    --arquivo templates/competencia.csv --ator seu-nome --confirmar
+./.venv/bin/python -m plataforma.cli reverter --lote <uuid> --ator seu-nome
+```
+
+Entidades prontas: `competencia`, `orgao_municipal`, `pessoa`, `mandato`.
+Faltam `gabinete`, `despesa` e `proposicao` — mesma máquina, só a especificação.
+
+Valida dígito verificador de CPF, existência do código IBGE, formato de data,
+numérico e domínio dos enums, sempre com o número da linha. Nada é gravado se
+houver qualquer erro.
+
+Toda linha importada nasce com `fonte_registro.tipo = 'manual'`, quem inseriu e
+o link do documento. Dado manual precisa parecer dado manual.
+
+**Mesa de alertas** em `/admin`. Lista a fila, e cada alerta espera notificar,
+aprovar ou descartar. A decisão vai para `auditoria` com ator e horário.
+
+**Fila de identidade** em `/admin/identidades`. Hoje está vazia porque a ponte
+do CPF resolveu os 513 — vazia significa resolvido, não quebrado.
+
+### Autenticação
+
+Não escrevemos autenticação: a identidade vem de um provedor externo e o código
+só decide o que a pessoa pode fazer, sempre verificando no servidor.
+
+| Ambiente | Mecanismo |
+|---|---|
+| Produção | `FIREBASE_CREDENTIALS` — ID token com claim de administrador |
+| Desenvolvimento | `ADMIN_TOKEN` — segredo de 32+ caracteres, sem usuário nem senha |
+
+O cidadão nunca passa por aqui: o app funciona anônimo, e onde a pessoa mora
+fica no aparelho, não no servidor.
+
 ## Próximo passo
 
-Painel de administração com autenticação, importador de CSV e as duas telas que
-não cabem em planilha: fila de identidade e mesa de alertas.
+Verificação real do Firebase (depende das credenciais do projeto), as três
+entidades que faltam no importador e o mapa ligado nestes dados.

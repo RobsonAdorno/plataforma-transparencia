@@ -17,6 +17,7 @@ from .config import DATABASE_URL, DERIVADO, cpf_valido, hash_cpf
 from .sources import camara, tse
 
 IBGE_UF = "https://servicodados.ibge.gov.br/api/v1/localidades/estados"
+IBGE_MUN = "https://servicodados.ibge.gov.br/api/v1/localidades/municipios"
 LEGISLATURA_ATUAL = "57"
 
 
@@ -69,9 +70,11 @@ def registra_fonte(cur, fonte: str, url: str, hash_conteudo: str | None = None,
 
 
 def carrega_entes(cur) -> dict[str, str]:
-    """Uniao e os 27 estados. Municipio entra quando a Fase 4 chegar."""
+    """União, os 27 estados e os 5.570 municípios."""
     cur.execute("insert into ente (codigo_ibge, nivel, nome) values ('0','uniao','União')"
                 " on conflict (codigo_ibge) do nothing")
+    cur.execute("create temp table if not exists ente_tmp"
+                " (codigo_ibge text, nome text, uf text) on commit drop")
     ufs = requests.get(IBGE_UF, timeout=60).json()
     por_sigla = {}
     for u in ufs:
@@ -81,6 +84,20 @@ def carrega_entes(cur) -> dict[str, str]:
             "insert into ente (codigo_ibge, nivel, nome, uf) values (%s,'estado',%s,%s)"
             " on conflict (codigo_ibge) do update set nome = excluded.nome",
             (cod, u["nome"], u["sigla"]))
+
+    # Os 5.570 municipios entram desde ja: sem eles nao se importa vereador,
+    # prefeito nem despesa municipal, que e o ponto do importador.
+    muns = requests.get(IBGE_MUN, timeout=120).json()
+    linhas = [(str(m["id"]), m["nome"],
+               m["microrregiao"]["mesorregiao"]["UF"]["sigla"])
+              for m in muns if m.get("microrregiao")]
+    with cur.copy("copy ente_tmp (codigo_ibge, nome, uf) from stdin") as cp:
+        for l in linhas:
+            cp.write_row(l)
+    cur.execute("""insert into ente (codigo_ibge, nivel, nome, uf)
+                   select codigo_ibge, 'municipio', nome, uf from ente_tmp
+                   on conflict (codigo_ibge) do update set nome = excluded.nome""")
+    print(f"entes: 1 união, {len(por_sigla)} estados, {len(linhas)} municípios")
     return por_sigla
 
 
