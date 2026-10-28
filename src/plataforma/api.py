@@ -137,6 +137,43 @@ def votacoes(limite: int = Query(20, le=100), apenas_nominais: bool = False):
         return cur.fetchall()
 
 
+@app.get("/congresso")
+def congresso():
+    """Composicao por partido, para o hemiciclo."""
+    with cursor() as cur:
+        cur.execute("""
+            select m.partido, count(*) as cadeiras
+              from mandato m
+             where m.cargo = 'DEPUTADO_FEDERAL' and m.situacao = 'em_exercicio'
+             group by m.partido order by count(*) desc, m.partido""")
+        partidos = cur.fetchall()
+    total = sum(p["cadeiras"] for p in partidos)
+    return {"casa": "Câmara dos Deputados", "total": total, "partidos": partidos}
+
+
+@app.get("/votacoes/{votacao_id}")
+def votacao_detalhe(votacao_id: int):
+    with cursor() as cur:
+        cur.execute("""
+            select vo.id, vo.data_hora, vo.orgao, vo.descricao, vo.aprovada, vo.tipo,
+                   pr.tipo as prop_tipo, pr.numero as prop_numero,
+                   pr.ano as prop_ano, pr.ementa
+              from votacao vo left join proposicao pr on pr.id = vo.proposicao_id
+             where vo.id = %s""", (votacao_id,))
+        v = cur.fetchone()
+        if v is None:
+            raise HTTPException(404, "votação não encontrada")
+        cur.execute("""
+            select v.tipo_voto, p.nome_urna, m.partido, e.uf
+              from voto v
+              join mandato m on m.id = v.mandato_id
+              join pessoa p  on p.id = m.pessoa_id
+              join ente e    on e.codigo_ibge = m.ente_codigo
+             where v.votacao_id = %s order by p.nome_urna""", (votacao_id,))
+        v["votos"] = cur.fetchall()
+        return v
+
+
 @app.get("/saude")
 def saude():
     """Status das fontes. Vira pagina publica de credibilidade."""
@@ -154,7 +191,7 @@ def saude():
         return {"fontes": fontes, "volumes": cur.fetchone()}
 
 
-from .web import router as _web      # noqa: E402  (evita import circular)
-from .admin import router as _admin  # noqa: E402
-app.include_router(_web)
+# A pagina do deputado agora e do Next.js, em web/. Aqui fica so a API e o
+# painel: dois renderizadores do mesmo HTML divergem com o tempo.
+from .admin import router as _admin  # noqa: E402  (evita import circular)
 app.include_router(_admin)

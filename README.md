@@ -23,9 +23,8 @@ Pipeline completo, carregando em PostgreSQL:
 **513 de 513 deputados ligados ao TSE**, sendo 511 por CPF e 2 por nome dentro
 da mesma UF. Fila de revisão vazia.
 
-Além disso: API de leitura em FastAPI (`src/plataforma/api.py`) e página de
-deputado renderizada no servidor (`src/plataforma/web.py`, rota
-`/deputado/{id}/{slug}`).
+Além disso: API de leitura em FastAPI (`src/plataforma/api.py`), painel de
+administração e front em Next.js (`web/`).
 
 ## Como rodar
 
@@ -104,8 +103,30 @@ export PYTHONPATH=src
 ./.venv/bin/uvicorn plataforma.api:app --reload --port 8000
 ```
 
-`/saude` · `/ufs` · `/deputados?uf=BA` · `/deputados/{id}` · `/votacoes` ·
-`/deputado/{id}/{slug}` (HTML renderizado no servidor)
+`/saude` · `/ufs` · `/congresso` · `/deputados?uf=BA` · `/deputados/{id}` ·
+`/votacoes` · `/votacoes/{id}` · `/admin` (painel)
+
+## Front em Next.js
+
+```bash
+cd web && npm install
+npm run dev          # http://localhost:3000, espera a API na 8000
+```
+
+| Rota | Como é servida |
+|---|---|
+| `/` | mapa do Brasil, estático com revalidação de 15 min |
+| `/uf/[sigla]` | 27 páginas pré-renderizadas |
+| `/deputado/[id]/[slug]` | sob demanda, com `schema.org/Person` |
+| `/congresso` | hemiciclo das 513 cadeiras, estático |
+
+Os componentes de servidor chamam a API direto, então não há CORS e o HTML já
+sai pronto — que é o que a busca orgânica exige. A malha do mapa são os 27
+estados do IBGE simplificados para 34 KB; a original tem 1 MB.
+
+As cadeiras do hemiciclo ficam neutras e só o partido selecionado acende:
+vinte e um partidos em vinte e uma cores ninguém distingue, menos ainda quem
+tem daltonismo.
 
 ## Alertas
 
