@@ -81,3 +81,14 @@ td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .barra[aria-pressed="true"] .btrilho{background:var(--surface)}
 .bpreenche{display:block;height:100%;background:var(--accent);border-radius:2px}
 .bnum{font-size:11.5px;text-align:right}
+
+/* camadas do mapa */
+.camadas{display:inline-flex;border:1px solid var(--line);border-radius:5px;overflow:hidden;
+         margin:13px 15px;background:var(--surface)}
+.camadas button{font-family:var(--fonte-mono);font-size:11.5px;letter-spacing:.05em;
+                text-transform:uppercase;padding:7px 12px;border:0;background:transparent;
+                color:var(--muted);cursor:pointer}
+.camadas button[aria-pressed="true"]{background:var(--accent);color:var(--on-accent)}
+.grupo{font-family:var(--fonte-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
+       color:var(--accent);margin:16px 0 4px;padding-top:12px;border-top:1px solid var(--line)}
+.grupo:first-child{margin-top:0;padding-top:0;border-top:0}

@@ -18,7 +18,8 @@ Pipeline completo, carregando em PostgreSQL:
 | Proposições | 5.887, 100% das votações com matéria vinculada |
 | Agenda | 78 eventos, 403 itens de pauta |
 | Alertas | 78 rascunhos a partir de 10 meses — cerca de 2 por semana |
-| Entes | 1 união, 27 estados, 5.570 municípios |
+| Entes | 1 união, 27 estados, 5.571 municípios |
+| Eleitos municipais | 58.174 vereadores e 5.568 prefeitos (TSE 2024) |
 
 **513 de 513 deputados ligados ao TSE**, sendo 511 por CPF e 2 por nome dentro
 da mesma UF. Fila de revisão vazia.
@@ -82,6 +83,23 @@ vínculo com a matéria de 24% para 100%.
 **Só 2% das votações são nominais.** Das 7.436 de 2026, apenas 155 registram
 quem votou o quê. `votacao.tipo` separa as duas, e a tela precisa dizer isso em
 vez de sugerir uma cobertura que não existe.
+
+**O TSE não divulga CPF de candidato municipal.** O campo vem com o código
+`-4`, de "não divulgável" — nos federais de 2022 vem completo. A ponte do CPF,
+que resolve os 513 deputados, não serve no município: lá a chave é o
+`SQ_CANDIDATO`, e `pessoa.cpf_hash` fica nulo. Quando chegar dado de câmara
+municipal raspado, o cruzamento será por nome dentro do município — é para isso
+que a fila de revisão existe.
+
+**Município recém-criado não tem `microrregiao` na API do IBGE.** Filtrar por
+esse campo descarta em silêncio: foi assim que Boa Esperança do Norte (MT)
+sumiu e os eleitos de lá ficaram sem município. São 5.571, não 5.570.
+
+**Vinte e um municípios não têm resultado de vereador publicado.** Todas as
+linhas vêm com `#NULO`, afetando 2.503 candidaturas — entre elas Ananindeua
+(PA) e Jataí (GO). Não é falha de carga: o arquivo do TSE não diz quem foi
+eleito. Brasília e Fernando de Noronha aparecem na mesma lista por motivo
+legítimo: não têm vereadores.
 
 **Na pauta, a matéria está em `proposicaoRelacionada_`.** O campo `proposicao_`
 aponta para o parecer do relator (PRL) em 259 dos 403 itens. Lendo o campo certo,
@@ -194,4 +212,6 @@ fica no aparelho, não no servidor.
 ## Próximo passo
 
 Verificação real do Firebase (depende das credenciais do projeto), as três
-entidades que faltam no importador e o mapa ligado nestes dados.
+entidades que faltam no importador, páginas de município e a cobertura
+declarada por município — hoje a ausência de vereador é indistinguível de
+"não publicado".

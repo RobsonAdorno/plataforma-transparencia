@@ -14,6 +14,7 @@ async function buscar<T>(caminho: string, revalidate = REVALIDAR): Promise<T> {
 export type Uf = {
   uf: string; nome: string; codigo_ibge: string;
   deputados: number; gasto_cota: number;
+  vereadores: number; prefeitos: number; municipios: number;
 };
 export type Deputado = {
   id: number; nome_urna: string; nome_completo: string; foto_url: string | null;

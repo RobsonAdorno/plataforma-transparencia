@@ -88,9 +88,19 @@ def carrega_entes(cur) -> dict[str, str]:
     # Os 5.570 municipios entram desde ja: sem eles nao se importa vereador,
     # prefeito nem despesa municipal, que e o ponto do importador.
     muns = requests.get(IBGE_MUN, timeout=120).json()
-    linhas = [(str(m["id"]), m["nome"],
-               m["microrregiao"]["mesorregiao"]["UF"]["sigla"])
-              for m in muns if m.get("microrregiao")]
+
+    def _uf(m: dict) -> str | None:
+        # Municipio recem-criado ainda nao tem microrregiao atribuida. Filtrar
+        # por ela descarta em silencio - foi assim que Boa Esperanca do Norte
+        # (MT) sumiu e os eleitos de la ficaram sem municipio.
+        if mi := m.get("microrregiao"):
+            return mi["mesorregiao"]["UF"]["sigla"]
+        ri = (m.get("regiao-imediata") or {}).get("regiao-intermediaria") or {}
+        return (ri.get("UF") or {}).get("sigla")
+
+    linhas = [(str(m["id"]), m["nome"], uf) for m in muns if (uf := _uf(m))]
+    if len(linhas) != len(muns):
+        print(f"  ATENÇÃO: {len(muns) - len(linhas)} municípios sem UF identificável")
     with cur.copy("copy ente_tmp (codigo_ibge, nome, uf) from stdin") as cp:
         for l in linhas:
             cp.write_row(l)
@@ -184,13 +194,25 @@ def carrega_despesas(cur, fonte_id: int, mandatos: dict[str, int], ano: int) -> 
             _num(d.get("vlrLiquido")), _num(d.get("vlrGlosa")),
             (d.get("urlDocumento") or "").strip() or None,
             chave, fonte_id))
+    # COPY nao aceita ON CONFLICT: entra numa temporaria e dali para a final.
+    cur.execute("""create temp table tmp_desp (like despesa including defaults)
+                   on commit drop""")
+    cur.execute("alter table tmp_desp drop column id")
     with cur.copy(
-        "copy despesa (mandato_id, data, categoria, descricao, fornecedor, cnpj_cpf,"
+        "copy tmp_desp (mandato_id, data, categoria, descricao, fornecedor, cnpj_cpf,"
         " valor, valor_glosa, documento_url, id_externo, fonte_registro_id) from stdin"
     ) as cp:
         for l in linhas:
             cp.write_row(l)
-            inseridas += 1
+    cur.execute("""insert into despesa (mandato_id, data, categoria, descricao,
+                     fornecedor, cnpj_cpf, valor, valor_glosa, documento_url,
+                     id_externo, fonte_registro_id)
+                   select mandato_id, data, categoria, descricao, fornecedor,
+                          cnpj_cpf, valor, valor_glosa, documento_url,
+                          id_externo, fonte_registro_id
+                     from tmp_desp
+                   on conflict (id_externo) do nothing""")
+    inseridas = cur.rowcount
     return inseridas, orfas, repetidas
 
 
@@ -391,11 +413,85 @@ def carrega_eventos(cur, fonte_id: int, inicio: str, fim: str) -> dict:
     return {"eventos": len(evento_id), "itens_de_pauta": n_itens}
 
 
+
+def carrega_eleitos_municipais(cur, fonte_id: int, ano: int = 2024) -> dict:
+    """Prefeitos e vereadores eleitos, pelo TSE.
+
+    O TSE nao divulga o CPF de candidato municipal: o campo vem com o codigo
+    -4, de 'nao divulgavel'. Entao a ponte do CPF, que resolve os federais, nao
+    serve aqui. A chave passa a ser o SQ_CANDIDATO - identificador exato da
+    propria fonte - e pessoa fica sem cpf_hash.
+
+    A consequencia aparece mais tarde: quando chegar dado de camara municipal
+    raspado, o cruzamento sera por nome dentro do municipio, e e por isso que a
+    fila de revisao existe.
+    """
+    from . import municipios
+
+    man = bronze.ja_baixado_hoje(tse.FONTE, f"consulta_cand_{ano}.zip")
+    if man is None:
+        raise RuntimeError(f"rode antes: ingest-tse --ano {ano}")
+
+    cur.execute("select codigo_ibge, nome, uf from ente where nivel='municipio'")
+    idx = municipios.Indice(cur.fetchall())
+
+    cur.execute("select id_na_fonte, pessoa_id from identidade_externa where fonte='tse'")
+    ja = dict(cur.fetchall())
+
+    els = tse.eleitos(man, cargos={"VEREADOR", "PREFEITO"})
+    registros, sem_municipio = [], 0
+    for e in els:
+        cod, _ = idx.resolve(e["uf"], e["municipio"])
+        if cod is None:
+            sem_municipio += 1
+            continue
+        registros.append((e, cod))
+
+    novos = [(e, cod) for e, cod in registros if e["sq_candidato"] not in ja]
+
+    # executemany com returning correlaciona cada id devolvido com a sua linha,
+    # que e o que COPY nao faz.
+    if novos:
+        cur.executemany(
+            """insert into pessoa (nome_completo, nome_urna, data_nascimento,
+                                   sexo, cor_raca)
+               values (%s,%s,%s,%s,%s) returning id""",
+            [(e["nome_completo"], e["nome_urna"], _data_br(e["nascimento"]),
+              e["sexo"] or None, e["cor_raca"] or None) for e, _ in novos],
+            returning=True)
+        for e, _ in novos:
+            ja[e["sq_candidato"]] = cur.fetchone()[0]
+            cur.nextset()
+
+    cur.executemany(
+        """insert into identidade_externa (fonte, id_na_fonte, pessoa_id, metodo,
+                                           confianca, fonte_registro_id)
+           values ('tse',%s,%s,'id_fonte',1.0,%s)
+           on conflict (fonte, id_na_fonte) do nothing""",
+        [(e["sq_candidato"], ja[e["sq_candidato"]], fonte_id) for e, _ in registros])
+
+    cur.executemany(
+        """insert into mandato (pessoa_id, cargo, ente_codigo, partido, legislatura,
+                                data_inicio, data_fim, situacao, fonte_registro_id)
+           values (%s,%s,%s,%s,'2025-2028',date '2025-01-01',date '2028-12-31',
+                   'em_exercicio',%s)
+           on conflict (pessoa_id, cargo, ente_codigo, legislatura) do update set
+             partido = excluded.partido""",
+        [(ja[e["sq_candidato"]], e["cargo"], cod, e["partido"] or None, fonte_id)
+         for e, cod in registros])
+
+    return {"eleitos_lidos": len(els), "pessoas_novas": len(novos),
+            "mandatos": len(registros), "sem_municipio": sem_municipio,
+            "municipios_nao_resolvidos": len(idx.nao_resolvidos),
+            "cpf_disponivel": False}
+
+
 def principal(ano_ceap: int = 2026, periodo: tuple[str, str] | None = None,
-              agenda: tuple[str, str] | None = None):
+              agenda: tuple[str, str] | None = None, municipal: int | None = None):
     with conecta() as con, con.cursor() as cur:
-        cur.execute("truncate despesa, voto, autoria, presenca,"
-                    " mandato, identidade_externa, pessoa restart identity cascade")
+        # Nada de truncate: o id de pessoa vira URL publica e precisa ser
+        # estavel entre execucoes. A carga e incremental, por upsert.
+        cur.execute("truncate autoria, presenca")
         uf_ibge = carrega_entes(cur)
         f_cam = registra_fonte(cur, "camara_api", f"{camara.API}/deputados")
         mandatos = carrega_deputados(cur, f_cam, uf_ibge)
@@ -415,6 +511,10 @@ def principal(ano_ceap: int = 2026, periodo: tuple[str, str] | None = None,
         if agenda:
             f_ev = registra_fonte(cur, "camara_api", f"{camara.API}/eventos")
             print("agenda:", json.dumps(carrega_eventos(cur, f_ev, *agenda), ensure_ascii=False))
+        if municipal:
+            f_mun = registra_fonte(cur, "tse_cand", tse.URL.format(ano=municipal))
+            print("municipal:", json.dumps(
+                carrega_eleitos_municipais(cur, f_mun, municipal), ensure_ascii=False))
         con.commit()
 
 
@@ -422,4 +522,5 @@ if __name__ == "__main__":
     import sys
     per = (sys.argv[1], sys.argv[2]) if len(sys.argv) > 2 else None
     age = (sys.argv[3], sys.argv[4]) if len(sys.argv) > 4 else None
-    principal(periodo=per, agenda=age)
+    mun = int(sys.argv[5]) if len(sys.argv) > 5 else None
+    principal(periodo=per, agenda=age, municipal=mun)

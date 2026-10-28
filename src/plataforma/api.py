@@ -38,16 +38,36 @@ def ufs():
     """Alimenta o mapa: uma leitura por clique no estado."""
     with cursor() as cur:
         cur.execute("""
+            with federal as (
+              select e.uf,
+                     count(distinct m.id)                     as deputados,
+                     coalesce(sum(d.valor), 0)::numeric(14,2) as gasto_cota
+                from ente e
+                left join mandato m on m.ente_codigo = e.codigo_ibge
+                                   and m.cargo = 'DEPUTADO_FEDERAL'
+                                   and m.situacao = 'em_exercicio'
+                left join despesa d on d.mandato_id = m.id
+               where e.nivel = 'estado'
+               group by e.uf
+            ), municipal as (
+              select e.uf,
+                     count(*) filter (where m.cargo = 'VEREADOR') as vereadores,
+                     count(*) filter (where m.cargo = 'PREFEITO') as prefeitos,
+                     count(distinct e.codigo_ibge)                as municipios
+                from ente e
+                left join mandato m on m.ente_codigo = e.codigo_ibge
+               where e.nivel = 'municipio'
+               group by e.uf
+            )
             select e.uf, e.nome, e.codigo_ibge,
-                   count(distinct m.id)                     as deputados,
-                   coalesce(sum(d.valor), 0)::numeric(14,2) as gasto_cota
+                   f.deputados, f.gasto_cota,
+                   coalesce(mu.vereadores, 0) as vereadores,
+                   coalesce(mu.prefeitos, 0)  as prefeitos,
+                   coalesce(mu.municipios, 0) as municipios
               from ente e
-              left join mandato m on m.ente_codigo = e.codigo_ibge
-                                 and m.cargo = 'DEPUTADO_FEDERAL'
-                                 and m.situacao = 'em_exercicio'
-              left join despesa d on d.mandato_id = m.id
+              join federal f    on f.uf = e.uf
+              left join municipal mu on mu.uf = e.uf
              where e.nivel = 'estado'
-             group by e.uf, e.nome, e.codigo_ibge
              order by e.uf""")
         return cur.fetchall()
 

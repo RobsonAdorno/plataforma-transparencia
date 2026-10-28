@@ -8,6 +8,17 @@ import { brl } from "../lib/api";
 
 type Props = { ufs: Uf[] };
 
+type Camada = "vereadores" | "prefeitos" | "deputados";
+
+const CAMADAS: { id: Camada; rotulo: string; valor: (u: Uf) => number; nota: string }[] = [
+  { id: "vereadores", rotulo: "Vereadores", valor: (u) => u.vereadores,
+    nota: "vereadores eleitos em 2024 · TSE" },
+  { id: "prefeitos", rotulo: "Prefeitos", valor: (u) => u.prefeitos,
+    nota: "prefeitos eleitos em 2024 · TSE" },
+  { id: "deputados", rotulo: "Deputados federais", valor: (u) => u.deputados,
+    nota: "bancada federal em exercício · Câmara" },
+];
+
 const caixa = (d: string) => {
   const re = /[ML](-?[\d.]+) (-?[\d.]+)/g;
   let m: RegExpExecArray | null, x0 = 1e9, y0 = 1e9, x1 = -1e9, y1 = -1e9;
@@ -23,14 +34,18 @@ export default function MapaBrasil({ ufs }: Props) {
   const router = useRouter();
   const svgRef = useRef<SVGSVGElement>(null);
   const [foco, setFoco] = useState<string | null>(null);
+  /* O volume do problema esta no municipio: 58 mil vereadores contra 513
+     deputados. Por isso o mapa abre em vereador, nao em federal. */
+  const [camada, setCamada] = useState<Camada>("vereadores");
   const [dica, setDica] = useState<{ x: number; y: number; txt: string } | null>(null);
 
   const porUf = useMemo(() => Object.fromEntries(ufs.map((u) => [u.uf, u])), [ufs]);
   const paths = malha.paths as Record<string, string>;
   const siglas = useMemo(() => Object.keys(paths).sort(), [paths]);
 
-  const max = Math.max(...ufs.map((u) => u.gasto_cota), 1);
-  const min = Math.min(...ufs.map((u) => u.gasto_cota));
+  const atual = CAMADAS.find((c) => c.id === camada)!;
+  const max = Math.max(...ufs.map(atual.valor), 1);
+  const min = Math.min(...ufs.map(atual.valor));
 
   const viewBox = useMemo(() => {
     if (!foco) return `0 0 ${malha.w} ${malha.h}`;
@@ -40,9 +55,18 @@ export default function MapaBrasil({ ufs }: Props) {
   }, [foco, paths]);
 
   const total = ufs.reduce((s, u) => s + u.gasto_cota, 0);
+  const soma = (k: "municipios" | "vereadores" | "prefeitos" | "deputados") =>
+    ufs.reduce((s, u) => s + (u[k] ?? 0), 0);
 
   return (
     <div className="cartao" style={{ overflow: "hidden" }}>
+      <div className="camadas" role="group" aria-label="Camada exibida">
+        {CAMADAS.map((c) => (
+          <button key={c.id} aria-pressed={camada === c.id} onClick={() => setCamada(c.id)}>
+            {c.rotulo}
+          </button>
+        ))}
+      </div>
       <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr" }} className="mapa-grade">
         <div style={{ position: "relative", borderRight: "1px solid var(--line)", minWidth: 0 }}>
           <svg
@@ -55,7 +79,7 @@ export default function MapaBrasil({ ufs }: Props) {
           >
             {siglas.map((s) => {
               const u = porUf[s];
-              const t = u ? (u.gasto_cota - min) / (max - min || 1) : 0;
+              const t = u ? (atual.valor(u) - min) / (max - min || 1) : 0;
               return (
                 <path
                   key={s}
@@ -77,7 +101,8 @@ export default function MapaBrasil({ ufs }: Props) {
                   onMouseMove={(e) => {
                     const r = svgRef.current!.getBoundingClientRect();
                     setDica({ x: e.clientX - r.left, y: e.clientY - r.top,
-                              txt: `${u?.nome ?? s} · ${u?.deputados ?? 0} deputados` });
+                              txt: `${u?.nome ?? s} · ${(u ? atual.valor(u) : 0)
+                                      .toLocaleString("pt-BR")} ${atual.rotulo.toLowerCase()}` });
                   }}
                   onMouseLeave={() => setDica(null)}
                 />
@@ -101,15 +126,28 @@ export default function MapaBrasil({ ufs }: Props) {
 
           {foco ? (
             <>
-              <Linha rotulo="Deputados federais" valor={String(porUf[foco]?.deputados ?? 0)} />
+              <Grupo>Municipal · eleitos em 2024</Grupo>
+              <Linha rotulo="Câmaras municipais" valor={fmt(porUf[foco]?.municipios)} />
+              <Linha rotulo="Vereadores" valor={fmt(porUf[foco]?.vereadores)} />
+              <Linha rotulo="Média por câmara"
+                     valor={media(porUf[foco]?.vereadores, porUf[foco]?.municipios)} />
+              <Linha rotulo="Prefeitos" valor={fmt(porUf[foco]?.prefeitos)} />
+              <Grupo>Federal</Grupo>
+              <Linha rotulo="Deputados federais" valor={fmt(porUf[foco]?.deputados)} />
               <Linha rotulo="Cota parlamentar em 2026" valor={brl(porUf[foco]?.gasto_cota ?? 0)} />
               <a className="selo" style={{ marginTop: 16, display: "inline-block" }}
-                 href={`/uf/${foco.toLowerCase()}`}>Ver a bancada →</a>
+                 href={`/uf/${foco.toLowerCase()}`}>Ver a bancada federal →</a>
             </>
           ) : (
             <>
-              <Linha rotulo="Deputados federais" valor="513" />
-              <Linha rotulo="Senadores" valor="81" />
+              <Grupo>Municipal · eleitos em 2024</Grupo>
+              <Linha rotulo="Câmaras municipais" valor={fmt(soma("municipios"))} />
+              <Linha rotulo="Vereadores" valor={fmt(soma("vereadores"))} />
+              <Linha rotulo="Média por câmara"
+                     valor={media(soma("vereadores"), soma("municipios"))} />
+              <Linha rotulo="Prefeitos" valor={fmt(soma("prefeitos"))} />
+              <Grupo>Federal</Grupo>
+              <Linha rotulo="Deputados federais" valor={fmt(soma("deputados"))} />
               <Linha rotulo="Cota parlamentar em 2026" valor={brl(total)} />
               <p className="muted" style={{ fontSize: 13, marginTop: 16 }}>
                 Clique num estado para focar, duas vezes ou Enter para abrir a bancada.
@@ -125,9 +163,19 @@ export default function MapaBrasil({ ufs }: Props) {
                background: "var(--accent)", opacity: o, display: "inline-block" }} />
         ))}
         <span>mais gasto</span>
-        <span style={{ marginLeft: "auto" }}>cota parlamentar · Câmara dos Deputados</span>
+        <span style={{ marginLeft: "auto" }}>{atual.nota}</span>
       </div>
     </div>
+  );
+}
+
+const fmt = (n?: number) => (n ?? 0).toLocaleString("pt-BR");
+const media = (a?: number, b?: number) =>
+  b ? (a! / b).toFixed(1).replace(".", ",") : "—";
+
+function Grupo({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="grupo">{children}</div>
   );
 }
 
