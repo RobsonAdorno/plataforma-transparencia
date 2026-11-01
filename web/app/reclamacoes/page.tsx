@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Fonte from "../components/Fonte";
 import { listarReclamacoes, dataBr, ESTADO_RECLAMACAO } from "../lib/api";
 
 export const revalidate = 120;

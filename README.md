@@ -372,13 +372,36 @@ partir o anel no ponto mais distante do início.
 
 Rótulos: a sigla de cada estado sempre visível, e os oito que não têm espaço
 interno (RN, PB, PE, AL, SE, ES, RJ, DF) saem para a margem com linha-guia.
-Nome do município só sob o cursor — 853 rótulos simultâneos em Minas não
-seriam legíveis em tela nenhuma.
+
+Os nomes dos municípios aparecem escritos no mapa, como num atlas. Não dá para
+escrever 853 de uma vez em Minas, então o algoritmo faz o que o atlas impresso
+faz: ordena por população, escreve o maior primeiro e vai descendo enquanto
+couber. Quando o centroide está ocupado, tenta um pouco acima e um pouco
+abaixo antes de desistir — isso sozinho rendeu 424 nomes a mais no país. O
+resultado vai de 16% dos municípios rotulados em Minas a 94% no Amapá, e as
+cidades que alguém procura primeiro aparecem sempre. Buscar filtra o mapa e
+passa a rotular os resultados em vez dos maiores.
 
 **Um município sem geometria:** Boa Esperança do Norte (MT, 5101837), criado
 recentemente, ainda não tem malha publicada pelo IBGE. Ele aparece na busca e
 na lista do estado, só não é clicável no mapa — o mesmo município que já tinha
 sido silenciosamente descartado pelo carregador antes.
+
+## Procedência: o ⓘ ao lado de cada número
+
+Todo dado exibido tem um ícone que abre uma ficha com três coisas: **o que é
+aquele número, quem publica, e um link para conferir**. O registro fica em
+`web/app/lib/fontes.ts`, num lugar só, para a mesma origem nunca ser descrita
+de dois jeitos em duas telas.
+
+A ficha também traz, quando existe, **o que o dado não diz** — que é a parte
+que costuma faltar. "58.174 vereadores" sem "são os eleitos, não quem está no
+cargo hoje" induz a erro; "cota parlamentar" sem "não inclui salário nem
+emenda" também. Omitir a ressalva é o jeito mais comum de enganar com dado
+verdadeiro.
+
+Abre no clique, não no hover: hover não existe em telefone, e quem mais
+precisa dessa informação é quem está desconfiado — essa pessoa clica.
 
 ## Reclamações
 

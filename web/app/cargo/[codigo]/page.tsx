@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import Fonte from "../../components/Fonte";
 import { verCargo, verCamaras, type Atribuicao, type CargoDetalhe } from "../../lib/api";
 
 export const revalidate = 3600;
@@ -76,6 +77,10 @@ export default async function PaginaCargo({ params }: Props) {
           {" · "}mandato de {c.mandato_anos} anos
           {c.em_exercicio > 0 && ` · ${c.em_exercicio.toLocaleString("pt-BR")} no Brasil`}
         </span>
+        {c.em_exercicio > 0 && (
+          <Fonte chave={c.esfera === "MUNICIPAL" ? "eleitos_municipais" : "eleitos_2022"}
+                 rotulo="quantos existem" />
+        )}
       </div>
 
       <h1 style={{ marginTop: 10 }}>{c.nome}</h1>
@@ -96,7 +101,9 @@ export default async function PaginaCargo({ params }: Props) {
 
       {c.limite.length > 0 && (
         <>
-          <h2 style={{ marginTop: 36 }}>Os limites numéricos</h2>
+          <h2 style={{ marginTop: 36 }}>
+            Os limites numéricos<Fonte chave="cf88" rotulo="Constituição" />
+          </h2>
           <p className="muted" style={{ fontSize: 13.5, margin: "7px 0 13px", maxWidth: "62ch" }}>
             Estes não são interpretação: são números que a Constituição fixa, e
             por isso dá para conferir contra o dado real.
@@ -116,7 +123,10 @@ export default async function PaginaCargo({ params }: Props) {
 
       {camaras && (
         <>
-          <h2 style={{ marginTop: 36 }}>Conferindo as 5.571 câmaras</h2>
+          <h2 style={{ marginTop: 36 }}>
+            Conferindo as 5.571 câmaras
+            <Fonte chave="art29" rotulo="teto do art. 29" />
+          </h2>
           <p className="muted" style={{ fontSize: 13.5, margin: "7px 0 14px", maxWidth: "64ch" }}>
             Cruzamos o número de vereadores eleitos em 2024 com a população do
             IBGE e o teto do art. 29, IV. É o tipo de conferência que o número
@@ -164,8 +174,10 @@ export default async function PaginaCargo({ params }: Props) {
                 <table>
                   <thead>
                     <tr>
-                      <th>Município</th><th className="n">Censo 2022</th>
-                      <th className="n">Estimativa 2021</th><th className="n">Cadeiras</th>
+                      <th>Município</th>
+                      <th className="n">Censo 2022<Fonte chave="ibge_censo" /></th>
+                      <th className="n">Estimativa 2021</th>
+                      <th className="n">Cadeiras<Fonte chave="eleitos_municipais" /></th>
                       <th className="n">Teto</th>
                     </tr>
                   </thead>

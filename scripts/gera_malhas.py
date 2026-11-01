@@ -32,7 +32,7 @@ import urllib.request
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parents[1]
-DESTINO = RAIZ / "web" / "app" / "malhas"
+DESTINO = RAIZ / "web" / "public" / "malhas"
 IBGE = ("https://servicodados.ibge.gov.br/api/v3/malhas/estados/{uf}"
         "?formato=application/vnd.geo+json&intrarregiao=municipio"
         "&qualidade=intermediaria")
@@ -178,7 +178,7 @@ def _aneis_de(geom: dict) -> list[list[tuple[float, float]]]:
     return []
 
 
-def monta(uf: str, geo: dict, nomes: dict[str, str]) -> dict:
+def monta(uf: str, geo: dict, dados: dict[str, tuple[str, int, int]]) -> dict:
     features = geo["features"]
     proj = _projetor(features)
     municipios = []
@@ -195,22 +195,32 @@ def monta(uf: str, geo: dict, nomes: dict[str, str]) -> dict:
         maior = max(aneis, key=len)
         cx = sum(p[0] for p in maior) / len(maior)
         cy = sum(p[1] for p in maior) / len(maior)
-        municipios.append({"c": codigo, "n": nomes.get(codigo, ""),
-                           "d": d, "x": round(cx), "y": round(cy)})
+        nome, pop, ver = dados.get(codigo, ("", 0, 0))
+        municipios.append({"c": codigo, "n": nome, "d": d,
+                           "x": round(cx), "y": round(cy), "p": pop, "v": ver})
     municipios.sort(key=lambda m: m["n"])
     return {"uf": uf, "w": LADO, "h": LADO, "municipios": municipios}
 
 
-def nomes_do_banco() -> dict[str, str]:
-    """Os nomes vem do banco, nao do IBGE: a malha so traz o codigo da area."""
+def dados_do_banco() -> dict[str, tuple[str, int, int]]:
+    """Nome, populacao e numero de vereadores. A malha do IBGE so traz o codigo.
+
+    A populacao nao e enfeite: e ela que decide quais nomes aparecem no mapa.
+    Sao 853 municipios em Minas e nenhuma tela comporta 853 rotulos, entao o
+    algoritmo escreve os maiores primeiro e vai descendo ate nao caber mais.
+    """
     sys.path.insert(0, str(RAIZ / "src"))
     try:
         from plataforma.load import conecta
         with conecta() as con, con.cursor() as cur:
-            cur.execute("select codigo_ibge, nome from ente where nivel='municipio'")
-            return {r[0]: r[1] for r in cur.fetchall()}
+            cur.execute("""select e.codigo_ibge, e.nome, coalesce(e.populacao,0),
+                                  count(*) filter (where m.cargo='VEREADOR')
+                             from ente e
+                             left join mandato m on m.ente_codigo = e.codigo_ibge
+                            where e.nivel='municipio' group by 1,2,3""")
+            return {r[0]: (r[1], r[2], r[3]) for r in cur.fetchall()}
     except Exception as e:
-        print(f"  aviso: sem nomes do banco ({e}); os rotulos ficam vazios")
+        print(f"  aviso: sem dados do banco ({e}); os rotulos ficam vazios")
         return {}
 
 
@@ -221,19 +231,19 @@ def main() -> int:
     ufs = [u.strip().upper() for u in a.uf.split(",")] if a.uf else list(UFS)
 
     DESTINO.mkdir(parents=True, exist_ok=True)
-    nomes = nomes_do_banco()
+    dados = dados_do_banco()
     total_bytes = total_mun = 0
 
     for uf in ufs:
         geo = baixa(uf)
-        dados = monta(uf, geo, nomes)
+        saida = monta(uf, geo, dados)
         alvo = DESTINO / f"{uf}.json"
-        alvo.write_text(json.dumps(dados, ensure_ascii=False, separators=(",", ":")))
+        alvo.write_text(json.dumps(saida, ensure_ascii=False, separators=(",", ":")))
         n = alvo.stat().st_size
         total_bytes += n
-        total_mun += len(dados["municipios"])
+        total_mun += len(saida["municipios"])
         cru = len(json.dumps(geo))
-        print(f"  {uf}  {len(dados['municipios']):>4} municipios  "
+        print(f"  {uf}  {len(saida['municipios']):>4} municipios  "
               f"{cru/1e6:>5.2f} MB cru -> {n/1024:>6.1f} KB  "
               f"({n/max(cru,1):.1%})")
 

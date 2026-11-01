@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import Fonte from "../../components/Fonte";
 import { Escalonamento } from "../../reclamar/Formulario";
 import { verReclamacao, dataBr, dataHoraBr, ESTADO_RECLAMACAO, type Reclamacao }
   from "../../lib/api";
@@ -64,6 +65,7 @@ export default async function PaginaReclamacao({ params }: Props) {
           {r.prorrogado && " — e esta prorrogação já foi usada"}. O prazo
           terminou em {dataBr(limite)}. O silêncio está registrado, e abaixo
           está o que você pode fazer agora.
+          <Fonte chave="lei_13460" rotulo="prazo de 30 dias" />
         </p>
       )}
       {r.estado === "encaminhada" && limite && (
@@ -72,7 +74,7 @@ export default async function PaginaReclamacao({ params }: Props) {
              borderLeftColor: "var(--accent)" }}>
           <strong>Aguardando resposta até {dataBr(limite)}.</strong>{" "}
           São 30 dias contados do encaminhamento, pelo art. 16 da Lei
-          13.460/2017.
+          13.460/2017.<Fonte chave="lei_13460" rotulo="prazo de 30 dias" />
           {r.prorrogado && " O órgão já usou a prorrogação que a lei permite."}
         </p>
       )}

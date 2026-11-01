@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import Fonte from "../../components/Fonte";
 import { verMunicipio, slug, type Cobertura, type Municipio } from "../../lib/api";
 
 export const revalidate = 3600;
@@ -91,11 +92,14 @@ export default async function PaginaMunicipio({ params }: Props) {
           {m.populacao && ` · ${m.populacao.toLocaleString("pt-BR")} habitantes `
             + `(Censo ${m.populacao_ano})`}
         </span>
+        {m.populacao && <Fonte chave="ibge_censo" rotulo="população" />}
       </div>
       <h1 style={{ marginTop: 10 }}>{m.nome}</h1>
 
       {/* ------------------------------------------------------ o prefeito */}
-      <h2 style={{ marginTop: 30 }}>Quem administra</h2>
+      <h2 style={{ marginTop: 30 }}>
+        Quem administra<Fonte chave="eleitos_municipais" rotulo="prefeito eleito" />
+      </h2>
       {m.prefeito ? (
         <div className="cartao" style={{ padding: 16, marginTop: 10 }}>
           <p className="mono muted" style={{ fontSize: 10.5, letterSpacing: ".07em",
@@ -117,7 +121,10 @@ export default async function PaginaMunicipio({ params }: Props) {
       ) : <Aviso c={cp} cargo="prefeito" />}
 
       {/* ----------------------------------------------------- a câmara */}
-      <h2 style={{ marginTop: 34 }}>Quem legisla e fiscaliza</h2>
+      <h2 style={{ marginTop: 34 }}>
+        Quem legisla e fiscaliza
+        <Fonte chave="eleitos_municipais" rotulo="vereadores eleitos" />
+      </h2>
 
       {cadeiras > 0 ? (
         <>
@@ -151,6 +158,7 @@ export default async function PaginaMunicipio({ params }: Props) {
                     + "porque a divergência pode estar na fonte."}
               {" "}
               <Link href="/cargo/vereador">Art. 29, IV →</Link>
+              <Fonte chave="art29" rotulo="teto de vereadores" />
             </p>
           )}
 

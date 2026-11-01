@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
+import Fonte from "../../../components/Fonte";
 import { ROTULO } from "../../../components/CartaoProjeto";
 import { verProjeto, dataBr, dataHoraBr, slug, type Bloco, type Projeto }
   from "../../../lib/api";
@@ -90,7 +91,9 @@ export default async function PaginaLei({ params }: Props) {
       </dl>
 
       {/* ---------------------------------------------- quem é responsável */}
-      <h2 style={{ marginTop: 34 }}>Quem é responsável</h2>
+      <h2 style={{ marginTop: 34 }}>
+        Quem é responsável<Fonte chave="camara_api" rotulo="autoria" />
+      </h2>
       <div className="duas" style={{ marginTop: 12 }}>
         <div className="cartao">
           <div className="cabeca-pode" data-tipo="pode">Assinaram o texto original</div>
@@ -134,7 +137,10 @@ export default async function PaginaLei({ params }: Props) {
       )}
 
       {/* ------------------------------------------------------- a trilha */}
-      <h2 style={{ marginTop: 36 }}>O caminho para virar lei</h2>
+      <h2 style={{ marginTop: 36 }}>
+        O caminho para virar lei
+        <Fonte chave="camara_api" rotulo="tramitação" />
+      </h2>
       <p className="muted" style={{ fontSize: 13.5, margin: "8px 0 20px", maxWidth: "64ch" }}>
         {p.esfera === "FEDERAL"
           ? "São sete etapas, porque no Congresso o texto passa por duas casas."
