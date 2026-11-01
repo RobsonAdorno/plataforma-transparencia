@@ -374,6 +374,29 @@ script: anel fechado tem o primeiro ponto igual ao último, e Douglas-Peucker
 sobre um segmento de comprimento zero descarta o anel inteiro. A correção é
 partir o anel no ponto mais distante do início.
 
+O viewBox segue a proporção real do estado, não um quadrado fixo. Com o
+quadrado, São Paulo e o Amazonas ficavam pequenos no meio de duas faixas
+vazias; agora SP sai 1000×674 e o quadro acompanha. O cartão também se
+dimensiona pela razão do mapa, em vez de esticar e deixar o mapa boiando.
+
+### Cores por região
+
+Municípios coloridos pela **região intermediária do IBGE**, estados pela
+macrorregião. A coloração é por grafo, com busca exata: região vizinha nunca
+repete cor. Vinte e três estados fecham em três cores; Bahia, Minas, Paraná e
+Rio Grande do Sul não fecham, e o excedente vai de hachura.
+
+São exatamente **três matizes** porque o validador de paleta reprova qualquer
+quarta cor no critério de mapa (`--pairs all`): testei violeta, magenta,
+amarelo e seis cinzas, e todos caem abaixo do piso de visão normal — que é
+falha dura, não desculpável por codificação secundária. Os valores são os três
+slots categóricos validados, compostos a 75% sobre a superfície; abaixo de 75%
+o par verde/azul cai para ΔE 14,1 e reprova. Validado nos dois temas.
+
+Como duas regiões distantes podem repetir matiz, **a identidade nunca depende
+da cor**: o nome do município está escrito no mapa, a legenda lista as regiões
+com a contagem, e clicar numa delas destaca só aquela.
+
 Rótulos: a sigla de cada estado sempre visível, e os oito que não têm espaço
 interno (RN, PB, PE, AL, SE, ES, RJ, DF) saem para a margem com linha-guia.
 

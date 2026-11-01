@@ -7,16 +7,16 @@ export const revalidate = 900;
 export default async function Home() {
   const ufs = await listarUfs();
   return (
-    <div className="wrap" style={{ paddingBlock: "36px 56px" }}>
+    <div className="wrap wrap-mapa" style={{ paddingBlock: "22px 56px" }}>
       <p className="mono" style={{ fontSize: 12, letterSpacing: ".14em",
            textTransform: "uppercase", color: "var(--accent)", margin: "0 0 12px" }}>
         Dados oficiais · Câmara e TSE
       </p>
       <h1>Quem representa você, e o que faz com o seu dinheiro</h1>
-      <p className="muted" style={{ maxWidth: "60ch", margin: "12px 0 26px" }}>
-        Comece pelo seu estado, desça até a sua cidade. Nenhuma lista longa: o
-        país cabe em 27 alvos, e cada clique reduz o problema em vez de
-        aumentá-lo. Onde não houver informação, a página diz isso — e diz por quê.
+      <p className="muted" style={{ maxWidth: "72ch", margin: "10px 0 18px",
+           fontSize: 15 }}>
+        Comece pelo seu estado, desça até a sua cidade. Onde não houver
+        informação, a página diz isso — e diz por quê.
       </p>
       <MapaNavegavel ufs={ufs} />
 

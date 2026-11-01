@@ -53,9 +53,7 @@ td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 @media (prefers-reduced-motion:reduce){*{transition-duration:.01ms!important;animation-duration:.01ms!important}}
 
 /* mapa */
-.mapa-grade{grid-template-columns:1.3fr 1fr}
-@media (max-width:720px){
-  .mapa-grade{grid-template-columns:1fr}
+@media (max-width:900px){
   .mapa-grade>div:first-child{border-right:0;border-bottom:1px solid var(--line)}
 }
 .voltar{position:absolute;top:10px;left:10px;font-family:var(--fonte-mono);font-size:11px;
@@ -157,27 +155,112 @@ td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
        color:var(--muted);margin-left:7px;vertical-align:1px}
 
 /* ------------------------------------------------------- mapa navegavel */
-.mapa-svg{display:block;width:100%;height:auto;max-height:72vh}
-.mapa-svg .uf,.mapa-svg .mun{fill:var(--surface-2);stroke:var(--line);stroke-width:1;
-  cursor:pointer;transition:fill .12s}
+/*
+   Cores das regioes. Tres matizes, e so tres: o validador da paleta reprova
+   qualquer quarta cor no criterio de mapa (--pairs all), porque o piso de
+   visao normal cai abaixo de 15 - e esse piso e falha dura, que codificacao
+   secundaria nao desculpa. Testei violeta, magenta, amarelo e seis cinzas.
+
+   Sao os tres slots categoricos validados, compostos a 75% sobre a superficie.
+   Abaixo de 75% o par verde/azul cai para delta-E 14,1 e reprova; acima fica
+   saturado demais para preenchimento de mapa. Validado nos dois temas.
+
+   Regiao vizinha nunca repete cor - a coloracao e por grafo, com busca exata.
+   Vinte e tres estados fecham em tres cores; Bahia, Minas, Parana e Rio Grande
+   do Sul nao fecham, e o excedente vai de hachura: textura e outro canal de
+   codificacao, nao uma quarta cor.
+
+   A identidade nunca depende da cor: o nome do municipio esta escrito em cima
+   e a legenda lista as regioes.
+*/
+:root{
+  --reg-a:#5e99df; --reg-b:#ef8d66; --reg-c:#53c29a;
+  --reg-borda:#fcfcfb;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme=light]){
+    --reg-a:#316cb2; --reg-b:#a94923; --reg-c:#197d5a;
+    --reg-borda:#0d1413;
+  }
+}
+:root[data-theme=dark]{
+  --reg-a:#316cb2; --reg-b:#a94923; --reg-c:#197d5a;
+  --reg-borda:#0d1413;
+}
+
+/* O quadro abraca o mapa em vez de deixar o mapa boiar dentro dele.
+   Com aspect-ratio no envoltorio, estado em pe como a Bahia encolhe a largura
+   junto com a altura - antes sobravam 230px vazios dos dois lados. O teto de
+   altura desconta o cabecalho para o mapa inteiro caber sem rolar. */
+/* A tela do mapa ganha mais largura que o resto do site: o mapa e o conteudo,
+   nao uma ilustracao ao lado do texto. */
+.wrap-mapa{max-width:1340px}
+/* No nivel do Brasil nao ha painel lateral. O cartao fica exatamente tao
+   largo quanto o mapa precisa para usar toda a altura disponivel - nem
+   esticado num retangulo largo com o mapa boiando, nem encolhido por
+   fit-content, que colapsa quando a largura so vem do aspect-ratio.
+   --razao e a proporcao do mapa, injetada pelo componente. */
+.cartao-abraca{width:min(100%, calc((100vh - 250px) * var(--razao,1)));
+  margin-inline:auto}
+.quadro-mapa{width:100%;margin:0 auto;max-height:calc(100vh - 220px);
+  display:flex;align-items:center;justify-content:center}
+.mapa-svg{display:block;width:100%;height:100%}
+.mapa-svg .uf,.mapa-svg .mun{cursor:pointer;transition:filter .12s}
+.mapa-svg .mun{fill:var(--surface-2);stroke:var(--reg-borda);stroke-width:1;
+  stroke-linejoin:round}
+.mapa-svg .mun[data-k=a]{fill:var(--reg-a)}
+.mapa-svg .mun[data-k=b]{fill:var(--reg-b)}
+.mapa-svg .mun[data-k=c]{fill:var(--reg-c)}
+.mapa-svg .mun[data-k=h]{fill:var(--reg-a);mask:url(#hachura)}
+.mapa-svg .uf{fill:var(--surface-2);stroke:var(--reg-borda);stroke-width:1.4}
+.mapa-svg .uf[data-k=a]{fill:var(--reg-a)}
+.mapa-svg .uf[data-k=b]{fill:var(--reg-b)}
+.mapa-svg .uf[data-k=c]{fill:var(--reg-c)}
 .mapa-svg .uf:hover,.mapa-svg .uf[data-hover],.mapa-svg .uf:focus-visible,
-.mapa-svg .mun:hover,.mapa-svg .mun:focus-visible{fill:var(--accent-wash);outline:0}
-.mapa-svg .mun{stroke-width:.6}
-.mapa-svg .mun[data-sel]{fill:var(--accent);stroke:var(--accent-ink);stroke-width:1.4}
-.mapa-svg .mun[data-apagado]{fill:var(--bg);opacity:.35;pointer-events:none}
-.rotulo-uf{font-family:var(--fonte-mono);font-size:20px;font-weight:500;
-  fill:var(--muted);text-anchor:middle;dominant-baseline:middle;cursor:pointer;
-  pointer-events:all;user-select:none}
-.rotulo-uf[data-fora]{font-size:18px}
-.rotulo-uf[data-hover]{fill:var(--accent-ink);font-weight:700}
-.guia-uf{stroke:var(--line);stroke-width:1;stroke-dasharray:2 3}
+.mapa-svg .mun:hover,.mapa-svg .mun:focus-visible{
+  filter:brightness(1.22) saturate(1.1);outline:0}
+.mapa-svg .mun[data-sel]{stroke:var(--fg);stroke-width:2.6;
+  filter:brightness(1.3) saturate(1.15)}
+.mapa-svg .mun[data-apagado]{fill:var(--surface-2);opacity:.3;pointer-events:none}
+
+.rotulo-uf{font-family:var(--fonte-mono);font-size:21px;font-weight:600;
+  fill:var(--fg);text-anchor:middle;dominant-baseline:middle;cursor:pointer;
+  pointer-events:all;user-select:none;paint-order:stroke;
+  stroke:var(--reg-borda);stroke-width:3.5px;stroke-linejoin:round}
+.rotulo-uf[data-fora]{font-size:19px}
+.rotulo-uf[data-hover]{fill:var(--accent-ink);stroke-width:5px}
+.guia-uf{stroke:var(--muted);stroke-width:1;stroke-dasharray:2 3;opacity:.6}
 .rotulo-mun{font-family:var(--fonte-corpo);font-size:15px;font-weight:600;
-  fill:var(--fg);text-anchor:middle;paint-order:stroke;stroke:var(--surface);
-  stroke-width:4px;pointer-events:none;user-select:none}
+  fill:var(--fg);text-anchor:middle;dominant-baseline:middle;paint-order:stroke;
+  stroke:var(--reg-borda);stroke-width:3.2px;stroke-linejoin:round;
+  pointer-events:none;user-select:none}
+.rotulo-mun[data-ativo]{font-weight:800;font-size:19px;stroke-width:5px;
+  pointer-events:all;cursor:pointer}
+
+/* legenda das regioes: a identidade nao pode depender so da cor */
+.legenda-regioes{display:flex;flex-wrap:wrap;gap:4px 14px;padding:11px 15px;
+  border-top:1px solid var(--line)}
+.legenda-regioes button{display:inline-flex;align-items:center;gap:6px;
+  font:inherit;font-size:12.5px;color:var(--muted);background:0;border:0;
+  padding:2px 4px;border-radius:4px;cursor:pointer}
+.legenda-regioes button:hover,.legenda-regioes button[aria-pressed=true]{
+  color:var(--fg);background:var(--surface-2)}
+.legenda-regioes span{display:inline-flex;align-items:center;gap:6px;
+  font-size:12.5px;color:var(--muted)}
+.nota-cor{padding:0 15px 11px;font-size:12px;color:var(--muted);margin:0}
+.mapa-svg .mun[data-foralegenda]{opacity:.22}
+.mapa-svg .uf[data-foralegenda]{opacity:.22}
+.legenda-regioes i{width:13px;height:13px;border-radius:3px;flex-shrink:0;
+  border:1px solid var(--reg-borda)}
+.legenda-regioes i[data-k=a]{background:var(--reg-a)}
+.legenda-regioes i[data-k=b]{background:var(--reg-b)}
+.legenda-regioes i[data-k=c]{background:var(--reg-c)}
+.legenda-regioes i[data-k=h]{background:repeating-linear-gradient(45deg,
+  var(--reg-a) 0 3px,transparent 3px 6px),var(--surface-2)}
 
 .painel-flutuante{position:absolute;left:14px;bottom:14px;background:var(--surface);
   border:1px solid var(--line);border-radius:6px;padding:9px 12px;font-size:14px;
-  pointer-events:none;box-shadow:0 2px 10px rgb(0 0 0/.07)}
+  pointer-events:none;box-shadow:0 2px 10px rgb(0 0 0/.07);max-width:62%}
 .painel-flutuante .mono{font-family:var(--fonte-mono);font-size:11.5px;color:var(--muted);
   margin-top:2px}
 .vazio-mapa{padding:40px 18px;color:var(--muted);font-style:italic;text-align:center;margin:0}
@@ -198,8 +281,14 @@ td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .lista-mun li{border-bottom:1px solid var(--line)}
 .lista-mun li:last-child{border-bottom:0}
 .lista-mun button{width:100%;text-align:left;background:0;border:0;padding:8px 2px;
-  font:inherit;color:inherit;cursor:pointer}
+  font:inherit;color:inherit;cursor:pointer;display:flex;gap:8px;align-items:center}
 .lista-mun button:hover{color:var(--accent-ink)}
+.lista-mun i{width:9px;height:9px;border-radius:2px;flex-shrink:0}
+.lista-mun i[data-k=a]{background:var(--reg-a)}
+.lista-mun i[data-k=b]{background:var(--reg-b)}
+.lista-mun i[data-k=c]{background:var(--reg-c)}
+.lista-mun i[data-k=h]{background:repeating-linear-gradient(45deg,
+  var(--reg-a) 0 2px,transparent 2px 4px),var(--surface-2)}
 .chips{display:flex;gap:5px;flex-wrap:wrap}
 .chip{font-family:var(--fonte-mono);font-size:10.5px;padding:2px 6px;border-radius:3px;
   background:var(--surface-2);color:var(--muted)}
@@ -213,6 +302,10 @@ td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
   background:var(--accent);color:var(--on-accent);border:1px solid var(--accent)}
 .botao.b-sec{background:var(--surface);color:var(--accent-ink);border-color:var(--line)}
 .botao:hover{filter:brightness(1.06)}
+
+/* O mapa manda na tela: era 1.3fr e sobrava espaco para o painel. */
+.mapa-grade{grid-template-columns:minmax(0,2.1fr) minmax(260px,1fr)}
+@media (max-width:900px){.mapa-grade{grid-template-columns:1fr}}
 
 /* ------------------------------------------------------- reclamacoes */
 textarea.campo{resize:vertical;min-height:120px;font-family:inherit}

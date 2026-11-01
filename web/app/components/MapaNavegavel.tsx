@@ -13,8 +13,10 @@ import Fonte from "./Fonte";
 // os 27 de uma vez seriam 2,5 MB para ver um estado.
 
 type Municipio = { c: string; n: string; d: string; x: number; y: number;
-                   p: number; v: number };
-type Malha = { uf: string; w: number; h: number; municipios: Municipio[] };
+                   p: number; v: number; r: string; k: string };
+type Regiao = { id: string; n: string; k: string; q: number };
+type Malha = { uf: string; w: number; h: number; municipios: Municipio[];
+               regioes: Regiao[] };
 
 type Detalhe = {
   codigo_ibge: string; nome: string; uf: string; populacao: number | null;
@@ -30,8 +32,43 @@ type Detalhe = {
 
 // O JSON importado tipa os pares como number[], nao como tupla: Record de
 // number[] e o tipo honesto aqui.
+// O viewBox do Brasil e o retangulo que a geometria realmente ocupa, nao a
+// tela inteira em que ela foi desenhada: sobravam 230 unidades vazias a
+// esquerda, e o pais aparecia encostado na direita.
+const VB = (malhaBr.vb ?? [0, 0, malhaBr.w, malhaBr.h]) as number[];
 const rotulos: Record<string, number[]> = malhaBr.rotulos;
 const guias: Record<string, number[]> = malhaBr.guias ?? {};
+
+// As cinco macrorregioes, e a cor de cada uma. Tres matizes bastam porque o
+// grafo delas e 3-colorivel: Norte e Sudeste nao se tocam, nem Nordeste e Sul.
+const MACRO: Record<string, [string, string]> = {
+  RO: ["Norte", "a"], AC: ["Norte", "a"], AM: ["Norte", "a"], RR: ["Norte", "a"],
+  PA: ["Norte", "a"], AP: ["Norte", "a"], TO: ["Norte", "a"],
+  MA: ["Nordeste", "b"], PI: ["Nordeste", "b"], CE: ["Nordeste", "b"],
+  RN: ["Nordeste", "b"], PB: ["Nordeste", "b"], PE: ["Nordeste", "b"],
+  AL: ["Nordeste", "b"], SE: ["Nordeste", "b"], BA: ["Nordeste", "b"],
+  MS: ["Centro-Oeste", "c"], MT: ["Centro-Oeste", "c"],
+  GO: ["Centro-Oeste", "c"], DF: ["Centro-Oeste", "c"],
+  MG: ["Sudeste", "a"], ES: ["Sudeste", "a"], RJ: ["Sudeste", "a"],
+  SP: ["Sudeste", "a"],
+  PR: ["Sul", "b"], SC: ["Sul", "b"], RS: ["Sul", "b"],
+};
+const MACRO_ORDEM = ["Norte", "Nordeste", "Centro-Oeste", "Sudeste", "Sul"];
+
+/** Hachura para a regiao que sobrou quando tres cores nao bastaram.
+ *  Textura e outro canal de codificacao, nao uma quarta cor - e e o unico
+ *  recurso legal aqui, porque o validador reprova qualquer quarta matiz. */
+function Defs() {
+  return (
+    <defs>
+      <pattern id="hachura" width="7" height="7" patternUnits="userSpaceOnUse"
+               patternTransform="rotate(45)">
+        <rect width="7" height="7" fill="var(--surface-2)" />
+        <rect width="3.5" height="7" fill="var(--reg-a)" />
+      </pattern>
+    </defs>
+  );
+}
 
 // Rotulagem do nivel de municipio.
 //
@@ -93,6 +130,10 @@ export default function MapaNavegavel({ ufs }: { ufs: Uf[] }) {
   const [buscandoMun, setBuscandoMun] = useState(false);
   const [busca, setBusca] = useState("");
   const [hover, setHover] = useState<string | null>(null);
+  // Regiao destacada pela legenda. Existe porque a cor sozinha nao identifica:
+  // num mapa colorido por adjacencia, duas regioes distantes repetem matiz de
+  // proposito. A legenda e o que resolve - e so resolve se for clicavel.
+  const [regiao, setRegiao] = useState<string | null>(null);
   const cache = useRef<Map<string, Malha>>(new Map());
 
   const porUf = useMemo(
@@ -100,7 +141,7 @@ export default function MapaNavegavel({ ufs }: { ufs: Uf[] }) {
 
   const abreEstado = useCallback(async (sigla: string) => {
     setUf(sigla); setMun(null); setDetalhe(null); setBusca("");
-    setErroMalha(null);
+    setErroMalha(null); setRegiao(null);
     const guardada = cache.current.get(sigla);
     if (guardada) { setMalha(guardada); return; }
     setCarregando(true);
@@ -167,16 +208,24 @@ export default function MapaNavegavel({ ufs }: { ufs: Uf[] }) {
     const totalMun = ufs.reduce((a, u) => a + u.municipios, 0);
     return (
       <div>
-        <div className="cartao" style={{ position: "relative", overflow: "hidden" }}>
-          <svg viewBox={`0 0 ${malhaBr.w} ${malhaBr.h}`} className="mapa-svg"
+        <div className="cartao cartao-abraca"
+             style={{ position: "relative", overflow: "hidden",
+                      ["--razao" as string]: `${VB[2] / VB[3]}` }}>
+          <div className="quadro-mapa"
+               style={{ aspectRatio: `${VB[2]} / ${VB[3]}` }}>
+          <svg viewBox={VB.join(" ")} className="mapa-svg"
                role="group" aria-label="Mapa do Brasil por estado">
+            <Defs />
             {Object.entries(malhaBr.paths).map(([sigla, d]) => {
               const u = porUf.get(sigla);
+              const [macro, k] = MACRO[sigla] ?? ["", "a"];
               return (
-                <path key={sigla} d={d as string} className="uf"
+                <path key={sigla} d={d as string} className="uf" data-k={k}
+                      data-foralegenda={regiao && macro !== regiao ? "" : undefined}
                       data-hover={hover === sigla ? "" : undefined}
                       tabIndex={0} role="button"
-                      aria-label={`${u?.nome ?? sigla}: ${u?.vereadores ?? 0} vereadores`}
+                      aria-label={`${u?.nome ?? sigla}, região ${macro}: `
+                                  + `${u?.vereadores ?? 0} vereadores`}
                       onMouseEnter={() => setHover(sigla)}
                       onMouseLeave={() => setHover(null)}
                       onFocus={() => setHover(sigla)}
@@ -213,15 +262,33 @@ export default function MapaNavegavel({ ufs }: { ufs: Uf[] }) {
               );
             })}
           </svg>
+          </div>
           {hover && porUf.get(hover) && (
             <div className="painel-flutuante">
               <strong>{porUf.get(hover)!.nome}</strong>
               <div className="mono">
+                região {MACRO[hover]?.[0]} ·{" "}
                 {porUf.get(hover)!.municipios} municípios ·{" "}
                 {porUf.get(hover)!.vereadores.toLocaleString("pt-BR")} vereadores
               </div>
             </div>
           )}
+          <div className="legenda-regioes">
+            {MACRO_ORDEM.map((nome) => {
+              const k = Object.values(MACRO).find(([m]) => m === nome)?.[1] ?? "a";
+              return (
+                <button key={nome} aria-pressed={regiao === nome}
+                        onClick={() => setRegiao(regiao === nome ? null : nome)}>
+                  <i data-k={k} />{nome}
+                </button>
+              );
+            })}
+          </div>
+          <p className="nota-cor">
+            Vizinhas nunca repetem cor, mas Norte e Sudeste compartilham uma, e
+            Nordeste e Sul outra — são três matizes para cinco regiões, e as que
+            dividem matiz não se tocam. Clique numa para destacá-la.
+          </p>
         </div>
         <p className="muted" style={{ fontSize: 13.5, marginTop: 12 }}>
           {totalMun.toLocaleString("pt-BR")} municípios
@@ -263,12 +330,18 @@ export default function MapaNavegavel({ ufs }: { ufs: Uf[] }) {
           {carregando && <p className="vazio-mapa">carregando o mapa de {uf}…</p>}
           {erroMalha && <p className="vazio-mapa">{erroMalha}</p>}
           {malha && (
+            <div className="quadro-mapa"
+                 style={{ aspectRatio: `${malha.w} / ${malha.h}` }}>
             <svg viewBox={`0 0 ${malha.w} ${malha.h}`} className="mapa-svg"
                  role="group" aria-label={`Municípios de ${u?.nome ?? uf}`}>
+              <Defs />
               {malha.municipios.map((m) => {
                 const visivel = !busca || filtrados.includes(m);
+                const foraDaRegiao = Boolean(regiao) && m.r !== regiao;
                 return (
-                  <path key={m.c} d={m.d} className="mun"
+                  <path key={m.c} d={m.d} className="mun" data-k={m.k}
+                        data-foralegenda={foraDaRegiao ? "" : undefined}
+                        fill={m.k === "h" ? "url(#hachura)" : undefined}
                         data-sel={mun === m.c ? "" : undefined}
                         data-apagado={!visivel ? "" : undefined}
                         tabIndex={visivel ? 0 : -1} role="button"
@@ -305,6 +378,34 @@ export default function MapaNavegavel({ ufs }: { ufs: Uf[] }) {
                   </text>
                 ))}
             </svg>
+            </div>
+          )}
+          {malha && malha.regioes.length > 1 && (
+            <>
+              <div className="legenda-regioes">
+                {malha.regioes.map((r) => (
+                  <button key={r.id} aria-pressed={regiao === r.id}
+                          onClick={() => setRegiao(regiao === r.id ? null : r.id)}>
+                    <i data-k={r.k} />{r.n}
+                    <span className="mono" style={{ opacity: .6 }}>{r.q}</span>
+                  </button>
+                ))}
+              </div>
+              <p className="nota-cor">
+                Regiões intermediárias do IBGE. Vizinhas nunca repetem cor, mas
+                regiões distantes podem — são três matizes para {malha.regioes.length}{" "}
+                regiões. Clique numa para destacá-la no mapa.
+              </p>
+            </>
+          )}
+          {hover && malha && (
+            <div className="painel-flutuante">
+              <strong>{malha.municipios.find((m) => m.c === hover)?.n}</strong>
+              <div className="mono">
+                {malha.regioes.find(
+                  (r) => r.id === malha.municipios.find((m) => m.c === hover)?.r)?.n}
+              </div>
+            </div>
           )}
         </div>
 
@@ -327,7 +428,7 @@ export default function MapaNavegavel({ ufs }: { ufs: Uf[] }) {
                     <button onMouseEnter={() => setHover(m.c)}
                             onMouseLeave={() => setHover(null)}
                             onClick={() => abreMunicipio(m.c)}>
-                      {m.n}
+                      <i data-k={m.k} aria-hidden />{m.n}
                     </button>
                   </li>
                 ))}

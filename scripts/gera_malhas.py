@@ -41,9 +41,28 @@ UFS = ("AC", "AL", "AM", "AP", "BA", "CE", "DF", "ES", "GO", "MA", "MG", "MS",
        "MT", "PA", "PB", "PE", "PI", "PR", "RJ", "RN", "RO", "RR", "RS", "SC",
        "SE", "SP", "TO")
 
-LADO = 1000          # o viewBox e quadrado de 1000 unidades
+MAIOR_LADO = 1000    # a maior dimensao do estado; a outra sai proporcional
 MARGEM = 8
 TOLERANCIA = 0.55    # em unidades do viewBox: abaixo de 1 nao se ve a diferenca
+IBGE_MUNICIPIOS = ("https://servicodados.ibge.gov.br/api/v1/localidades/"
+                   "estados/{uf}/municipios")
+
+# Quatro preenchimentos, aplicados por coloracao de grafo: regiao vizinha nunca
+# recebe a mesma cor. Isso e coloracao cartografica, nao codificacao de dado -
+# duas regioes distantes podem repetir a cor sem confundir ninguem, porque o
+# nome esta escrito em cima e a identidade nunca depende so da cor.
+#
+# Sao tres matizes porque o validador da paleta so aprova tres em --pairs all,
+# que e o criterio de mapa. Testei a quarta posicao com violeta, magenta e
+# amarelo: todas reprovam no piso de visao normal, e esse piso e falha dura
+# que codificacao secundaria nao desculpa. O quarto slot e neutro, usado so
+# quando tres nao bastam.
+#
+# Os valores sao os tres slots validados compostos a 75% sobre a superficie -
+# abaixo disso o par verde/azul cai para delta-E 14,1 e reprova. O apuramento
+# esta no commit que introduziu este arquivo.
+HUES = ("a", "b", "c")   # o CSS resolve cada letra nos dois temas
+HACHURA = "h"            # mesma matiz 'a', com textura: canal extra, nao 4a cor
 
 
 def baixa(uf: str) -> dict:
@@ -82,20 +101,25 @@ def _projetor(features: list[dict]):
 
     Sem o cos(lat) o estado aparece esticado na horizontal - visivel a olho nu
     no Amazonas e no Rio Grande do Sul, que estao longe do equador.
+
+    O viewBox segue a proporcao real do estado, nao um quadrado fixo. Com o
+    quadrado, estado alongado como o Amazonas ou o Rio Grande do Sul ficava
+    pequeno no meio de duas faixas vazias, e o usuario reclamou disso olhando
+    a Bahia: o mapa ocupava metade do espaco que tinha.
     """
     x0, y0, x1, y1 = _limites(features)
     k = math.cos(math.radians((y0 + y1) / 2)) or 1.0
     larg = (x1 - x0) * k
     alt = (y1 - y0)
-    escala = (LADO - 2 * MARGEM) / max(larg, alt)
-    dx = (LADO - larg * escala) / 2
-    dy = (LADO - alt * escala) / 2
+    escala = (MAIOR_LADO - 2 * MARGEM) / max(larg, alt)
+    w = larg * escala + 2 * MARGEM
+    h = alt * escala + 2 * MARGEM
 
     def proj(lon: float, lat: float) -> tuple[float, float]:
-        return (dx + (lon - x0) * k * escala,
-                dy + (y1 - lat) * escala)       # y cresce para baixo no SVG
+        return (MARGEM + (lon - x0) * k * escala,
+                MARGEM + (y1 - lat) * escala)   # y cresce para baixo no SVG
 
-    return proj
+    return proj, round(w), round(h)
 
 
 # --------------------------------------------------------- Douglas-Peucker
@@ -178,10 +202,130 @@ def _aneis_de(geom: dict) -> list[list[tuple[float, float]]]:
     return []
 
 
+def regioes_do_estado(uf: str) -> dict[str, tuple[str, str]]:
+    """Regiao intermediaria de cada municipio: (id, nome).
+
+    E a divisao oficial vigente do IBGE, que substituiu a mesorregiao. Da de 5
+    a 13 regioes por estado - granularidade certa para agrupar o mapa sem
+    virar um borrao nem virar 400 pedacos.
+    """
+    import unicodedata
+    req = urllib.request.Request(IBGE_MUNICIPIOS.format(uf=uf),
+                                 headers={"accept": "application/json"})
+    with urllib.request.urlopen(req, timeout=180) as r:
+        bruto = r.read()
+    if bruto[:2] == b"\x1f\x8b":
+        import gzip
+        bruto = gzip.decompress(bruto)
+    saida: dict[str, tuple[str, str]] = {}
+    for m in json.loads(bruto):
+        ri = (m.get("regiao-imediata") or {}).get("regiao-intermediaria") or {}
+        nome = (ri.get("nome") or "").strip()
+        # O servico devolve o travessao como caractere invalido em alguns nomes
+        # ("Ilheus ? Itabuna"): e ruido de codificacao e sai feio na tela.
+        for ruim in ("\ufffd", "\xbf", "\u00bf"):
+            nome = nome.replace(ruim, "\u2013")
+        saida[str(m["id"])] = (str(ri.get("id") or ""), unicodedata.normalize("NFC", nome))
+    return saida
+
+
+def adjacencia(geo: dict) -> dict[str, set[str]]:
+    """Quais municipios se tocam, pelos vertices que compartilham.
+
+    A malha do IBGE e topologica: 85% dos vertices pertencem a mais de um
+    poligono. Calcular isso ANTES de simplificar e essencial - depois cada
+    contorno e simplificado por conta propria e as fronteiras deixam de bater.
+    """
+    from collections import defaultdict
+
+    dono: dict[tuple[float, float], set[str]] = defaultdict(set)
+
+    def pontos(c):
+        if isinstance(c[0], (int, float)):
+            yield (round(c[0], 6), round(c[1], 6))
+        else:
+            for x in c:
+                yield from pontos(x)
+
+    for f in geo["features"]:
+        cod = str((f.get("properties") or {}).get("codarea") or "")
+        for p in pontos(f["geometry"]["coordinates"]):
+            dono[p].add(cod)
+
+    viz: dict[str, set[str]] = defaultdict(set)
+    for ms in dono.values():
+        if len(ms) > 1:
+            for a in ms:
+                viz[a] |= ms - {a}
+    return viz
+
+
+def colore_regioes(regioes: dict[str, tuple[str, str]],
+                   viz: dict[str, set[str]]) -> dict[str, str]:
+    """Coloracao de grafo: regiao vizinha nunca recebe a mesma cor.
+
+    Busca exata com retrocesso, nao heuristica gulosa - e a diferenca entre
+    precisar de tres cores ou de quatro, e quatro nao esta disponivel.
+    O validador da paleta reprova qualquer quarta cor em --pairs all, que e o
+    criterio de mapa: testei violeta, magenta, amarelo e seis cinzas, e todos
+    caem abaixo do piso de visao normal, que e falha dura.
+
+    Com no maximo treze regioes por estado o espaco de busca e pequeno e a
+    resposta sai instantanea. Se ainda assim tres nao bastarem, o excedente
+    recebe a primeira matiz com hachura - textura e outro canal de
+    codificacao, nao uma quarta cor.
+    """
+    from collections import defaultdict
+
+    entre: dict[str, set[str]] = defaultdict(set)
+    for mun, vizinhos in viz.items():
+        ra = regioes.get(mun, ("", ""))[0]
+        if not ra:
+            continue
+        for v in vizinhos:
+            rb = regioes.get(v, ("", ""))[0]
+            if rb and rb != ra:
+                entre[ra].add(rb)
+                entre[rb].add(ra)
+
+    # Grau decrescente: o no mais travado primeiro, que e o que poda mais cedo.
+    ordem = sorted({r for r, _n in regioes.values() if r},
+                   key=lambda r: (-len(entre.get(r, ())), r))
+    cor: dict[str, str] = {}
+
+    def tenta(i: int) -> bool:
+        if i == len(ordem):
+            return True
+        r = ordem[i]
+        usadas = {cor[v] for v in entre.get(r, ()) if v in cor}
+        for c in HUES:
+            if c in usadas:
+                continue
+            cor[r] = c
+            if tenta(i + 1):
+                return True
+            del cor[r]
+        return False
+
+    if tenta(0):
+        return cor
+
+    # Nao deu com tres: guloso, e quem sobrar vai de hachura.
+    cor.clear()
+    for r in ordem:
+        usadas = {cor[v] for v in entre.get(r, ()) if v in cor}
+        cor[r] = next((c for c in HUES if c not in usadas), HACHURA)
+    return cor
+
+
 def monta(uf: str, geo: dict, dados: dict[str, tuple[str, int, int]]) -> dict:
     features = geo["features"]
-    proj = _projetor(features)
+    proj, w, h = _projetor(features)
+    regioes = regioes_do_estado(uf)
+    cor_regiao = colore_regioes(regioes, adjacencia(geo))
+
     municipios = []
+    vistas: dict[str, dict] = {}
     for f in features:
         codigo = str((f.get("properties") or {}).get("codarea") or "").strip()
         aneis = []
@@ -191,16 +335,22 @@ def monta(uf: str, geo: dict, dados: dict[str, tuple[str, int, int]]) -> dict:
         d = _para_d(aneis)
         if not d:
             continue
-        # centroide do maior anel, para ancorar o rotulo
-        maior = max(aneis, key=len)
+        maior = max(aneis, key=len)       # centroide do maior anel, para o rotulo
         cx = sum(p[0] for p in maior) / len(maior)
         cy = sum(p[1] for p in maior) / len(maior)
         nome, pop, ver = dados.get(codigo, ("", 0, 0))
+        rid, rnome = regioes.get(codigo, ("", ""))
         municipios.append({"c": codigo, "n": nome, "d": d,
-                           "x": round(cx), "y": round(cy), "p": pop, "v": ver})
-    municipios.sort(key=lambda m: m["n"])
-    return {"uf": uf, "w": LADO, "h": LADO, "municipios": municipios}
+                           "x": round(cx), "y": round(cy), "p": pop, "v": ver,
+                           "r": rid, "k": cor_regiao.get(rid, "n")})
+        if rid:
+            vistas.setdefault(rid, {"id": rid, "n": rnome,
+                                    "k": cor_regiao.get(rid, "n"), "q": 0})
+            vistas[rid]["q"] += 1
 
+    municipios.sort(key=lambda m: m["n"])
+    return {"uf": uf, "w": w, "h": h, "municipios": municipios,
+            "regioes": sorted(vistas.values(), key=lambda r: -r["q"])}
 
 def dados_do_banco() -> dict[str, tuple[str, int, int]]:
     """Nome, populacao e numero de vereadores. A malha do IBGE so traz o codigo.
@@ -243,9 +393,11 @@ def main() -> int:
         total_bytes += n
         total_mun += len(saida["municipios"])
         cru = len(json.dumps(geo))
-        print(f"  {uf}  {len(saida['municipios']):>4} municipios  "
-              f"{cru/1e6:>5.2f} MB cru -> {n/1024:>6.1f} KB  "
-              f"({n/max(cru,1):.1%})")
+        cores = {m["k"] for m in saida["municipios"]}
+        print(f"  {uf}  {len(saida['municipios']):>4} mun  "
+              f"{len(saida['regioes']):>2} regioes  {len(cores)} cores  "
+              f"{saida['w']}x{saida['h']}  "
+              f"{cru/1e6:>5.2f} MB -> {n/1024:>6.1f} KB")
 
     print(f"\n{len(ufs)} estados, {total_mun} municipios, "
           f"{total_bytes/1024/1024:.2f} MB no total "
