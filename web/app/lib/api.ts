@@ -200,3 +200,67 @@ export type Fontes = {
 };
 
 export const verFontes = () => buscar<Fontes>("/fontes", 3600);
+
+// ------------------------------------------------------------ reclamacoes
+
+export type Responsavel = {
+  tema: string; esfera: "MUNICIPAL" | "ESTADUAL" | "FEDERAL";
+  cargo_responsavel: string; descricao: string | null; base_legal: string;
+  ente_destino: string;
+  ocupante: { pessoa_id: number; nome_urna: string; nome_completo: string;
+              partido: string | null } | null;
+  canais: { tipo: string; valor: string; orgao: string | null }[];
+};
+export type Passo = {
+  ordem: number; orgao: string; o_que_fazer: string; prazo: string | null;
+  base_legal: string; quando_usar: string | null;
+};
+export type Rota = {
+  tema: string; indefinido: boolean; responsaveis: Responsavel[];
+  escalonamento?: Passo[];
+};
+export type TemaCompetencia = {
+  tema: string; esfera: "MUNICIPAL" | "ESTADUAL" | "FEDERAL";
+  cargo_responsavel: string; descricao: string | null; base_legal: string;
+};
+export type EstadoReclamacao =
+  | "recebida" | "encaminhada" | "respondida" | "sem_resposta"
+  | "improcedente" | "arquivada";
+export type ReclamacaoLinha = {
+  protocolo: string; titulo: string; tema: string; estado: EstadoReclamacao;
+  criado_em: string; prazo_resposta: string | null; prorrogado_ate: string | null;
+  respondido_em: string | null; esfera_responsavel: string | null;
+  cargo_destino: string | null; destino_nome: string | null;
+  resolvido: boolean | null; municipio: string; uf: string; autor: string | null;
+};
+export type Reclamacao = ReclamacaoLinha & {
+  descricao: string; local_referencia: string | null;
+  encaminhado_em: string | null; prorrogado: boolean;
+  resposta: string | null; resposta_autor: string | null;
+  destino_orgao: string | null; destino_metodo: string | null;
+  ente_codigo: string; dias_de_atraso: number;
+  linha_do_tempo: { tipo: string; descricao: string | null; ator: string | null;
+                    criado_em: string }[];
+  escalonamento?: Passo[];
+};
+
+export const listarTemas = () => buscar<TemaCompetencia[]>("/reclamacoes/temas", 3600);
+export const verRota = (tema: string, ente: string) =>
+  buscar<Rota>(`/reclamacoes/rota?tema=${encodeURIComponent(tema)}&ente=${ente}`, 600);
+export const listarReclamacoes = (ente?: string, estado?: string) =>
+  buscar<ReclamacaoLinha[]>(
+    `/reclamacoes?${ente ? `ente=${ente}&` : ""}${estado ? `estado=${estado}` : ""}`, 120);
+export const verReclamacao = (protocolo: string) =>
+  buscar<Reclamacao>(`/reclamacoes/${protocolo}`, 60);
+export const verEscalonamento = (esfera: string) =>
+  buscar<{ esfera: string; passos: Passo[] }>(
+    `/reclamacoes/escalonamento/${esfera}`, 3600);
+
+export const ESTADO_RECLAMACAO: Record<EstadoReclamacao, [string, string]> = {
+  recebida:     ["Recebida", "var(--muted)"],
+  encaminhada:  ["Aguardando resposta", "var(--accent-ink)"],
+  respondida:   ["Respondida", "var(--accent-ink)"],
+  sem_resposta: ["Prazo vencido sem resposta", "var(--risk)"],
+  improcedente: ["Arquivada como improcedente", "var(--muted)"],
+  arquivada:    ["Arquivada", "var(--muted)"],
+};

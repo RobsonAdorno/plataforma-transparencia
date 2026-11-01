@@ -524,3 +524,69 @@ if __name__ == "__main__":
     age = (sys.argv[3], sys.argv[4]) if len(sys.argv) > 4 else None
     mun = int(sys.argv[5]) if len(sys.argv) > 5 else None
     principal(periodo=per, agenda=age, municipal=mun)
+
+
+def carrega_eleitos_estaduais(cur, fonte_id: int, ano: int = 2022) -> dict:
+    """Governadores, senadores e presidente, do arquivo do TSE.
+
+    Carregado porque o roteamento de reclamacao depende deles: quem reclama de
+    seguranca publica precisa chegar ao governador, e com a tabela vazia a tela
+    dizia "(nao carregado)" num lugar onde a informacao existe e e publica.
+
+    Aqui o CPF vem completo - diferente do nivel municipal, onde o TSE publica
+    '-4'. Entao estas pessoas entram com cpf_hash e podem ser cruzadas com a
+    Camara e com o CEAP depois.
+    """
+    CARGOS = {"GOVERNADOR", "SENADOR", "PRESIDENTE"}
+    man = bronze.ja_baixado_hoje(tse.FONTE, f"consulta_cand_{ano}.zip") or tse.baixa(ano)
+    els = [e for e in tse.eleitos(man, CARGOS)]
+
+    cur.execute("select uf, codigo_ibge from ente where nivel='estado'")
+    uf_ibge = {r[0]: r[1] for r in cur.fetchall()}
+
+    n_pessoa = n_mandato = n_sem_ente = 0
+    for e in els:
+        # Presidente representa a Uniao; governador e senador, o estado.
+        ente = "0" if e["cargo"] == "PRESIDENTE" else uf_ibge.get(e["uf"])
+        if ente is None:
+            n_sem_ente += 1
+            continue
+        cpf = e["cpf"] if cpf_valido(e["cpf"]) else None
+        cur.execute(
+            """insert into pessoa (nome_completo, nome_urna, cpf_hash,
+                                   data_nascimento, sexo, cor_raca)
+               values (%s,%s,%s,%s,%s,%s)
+               on conflict (cpf_hash) do update set
+                 nome_urna = coalesce(excluded.nome_urna, pessoa.nome_urna)
+               returning id""",
+            (e["nome_completo"], e["nome_urna"] or None,
+             hash_cpf(cpf) if cpf else None, _data_br(e["nascimento"]),
+             e["sexo"] or None, e["cor_raca"] or None))
+        pessoa_id = cur.fetchone()[0]
+        n_pessoa += 1
+
+        cur.execute(
+            """insert into mandato (pessoa_id, cargo, ente_codigo, partido,
+                                    legislatura, situacao, fonte_registro_id)
+               values (%s,%s,%s,%s,%s,'em_exercicio',%s)
+               on conflict (pessoa_id, cargo, ente_codigo, legislatura)
+               do update set partido = excluded.partido""",
+            (pessoa_id, e["cargo"], ente, e["partido"] or None,
+             f"{ano + 1}-{ano + 4}", fonte_id))
+        n_mandato += 1
+
+        cur.execute(
+            """insert into identidade_externa (fonte, id_na_fonte, pessoa_id,
+                                               metodo, confianca, fonte_registro_id)
+               values ('tse',%s,%s,'id_fonte',1.0,%s)
+               on conflict (fonte, id_na_fonte) do nothing""",
+            (e["sq_candidato"], pessoa_id, fonte_id))
+
+    # confere() compara contra os totais de TODOS os cargos fixados por lei.
+    # Esta carga pede so tres, entao a ausencia dos outros nao e divergencia -
+    # filtrar evita o alarme falso que mata a confianca no alarme de verdade.
+    problemas = [p for p in tse.confere(ano, els)
+                 if p.split(":")[0].strip() in CARGOS]
+    return {"eleitos_no_arquivo": len(els), "pessoas": n_pessoa,
+            "mandatos": n_mandato, "sem_ente": n_sem_ente,
+            "divergencias": problemas}

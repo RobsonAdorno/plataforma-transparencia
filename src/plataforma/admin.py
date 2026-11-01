@@ -4,6 +4,9 @@ Tres superficies, nao uma. O importador cobre dado em massa e vive na CLI e
 numa rota de upload. As duas telas aqui existem porque sao decisao rapida e
 repetitiva, coisa que planilha nao resolve:
 
+  reclamacoes        - a fila que exige acao: enquanto a reclamacao nao e
+                       encaminhada, o prazo legal de 30 dias nem comeca a
+                       correr, e a pagina publica diz isso ao cidadao
   mesa de alertas    - as votacoes do dia com um botao de notificar
   fila de identidade - comparacao lado a lado, aprovar ou rejeitar
   divergencias       - proposicoes cuja situacao declarada pela fonte nao
@@ -23,6 +26,7 @@ from fastapi.responses import HTMLResponse
 
 from . import alertas as mod_alertas
 from .api import cursor
+from psycopg.rows import dict_row as _dict
 from .auth import Ator, exige_escrita
 from .config import DATABASE_URL
 
@@ -222,6 +226,85 @@ def decide_atribuicao(atribuicao_id: int, decisao: str, texto: str | None = None
     return {"id": atribuicao_id, "decisao": decisao}
 
 
+# -------------------------------------------------------------- reclamacoes
+
+@router.get("/reclamacoes")
+def fila_reclamacoes(estado: str = "recebida", limite: int = 50,
+                     ator: Ator = Depends(exige_escrita)):
+    """A mesa das reclamacoes. 'recebida' e a fila que exige acao: sao as que
+    ainda nao foram encaminhadas, e enquanto nao forem o prazo legal nem comeca
+    a correr."""
+    with cursor() as cur:
+        cur.execute("""
+            select r.id, r.protocolo, r.titulo, r.descricao, r.tema, r.estado,
+                   r.local_referencia, r.criado_em, r.prazo_resposta,
+                   r.prorrogado, r.prorrogado_ate, r.esfera_responsavel,
+                   r.cargo_destino, r.destino_nome, r.destino_orgao,
+                   r.destino_metodo, r.autor_email, e.nome as municipio, e.uf,
+                   (select count(*) from canal_atendimento c
+                     where c.ente_codigo = r.ente_codigo) as canais
+              from reclamacao r join ente e on e.codigo_ibge = r.ente_codigo
+             where (%s = 'todas' or r.estado = %s)
+             order by r.criado_em limit %s""", (estado, estado, limite))
+        itens = cur.fetchall()
+        cur.execute("""select estado, count(*) as total from reclamacao
+                        group by 1 order by 2 desc""")
+        return {"itens": itens, "por_estado": cur.fetchall()}
+
+
+@router.post("/reclamacoes/{reclamacao_id}/encaminhar")
+def admin_encaminha(reclamacao_id: int, como: str = "ouvidoria",
+                    ator: Ator = Depends(exige_escrita)):
+    from . import reclamacoes as mod
+
+    with psycopg.connect(DATABASE_URL, row_factory=_dict) as con, con.cursor() as cur:
+        r = mod.encaminha(cur, reclamacao_id, ator.email, como)
+        if "erro" in r:
+            raise HTTPException(409, r["erro"])
+        _audita(cur, ator.email, "encaminhar_reclamacao", "reclamacao",
+                str(reclamacao_id), r)
+        con.commit()
+    return r
+
+
+@router.post("/reclamacoes/{reclamacao_id}/responder")
+def admin_responde(reclamacao_id: int, resposta: str, autor: str = "",
+                   ator: Ator = Depends(exige_escrita)):
+    """Publica a resposta do orgao, no texto em que ela veio.
+
+    Quem opera transcreve; nao resume. Resumo de resposta oficial e
+    interpretacao, e a pagina promete o texto como foi enviado.
+    """
+    from . import reclamacoes as mod
+
+    if len(resposta.strip()) < 10:
+        raise HTTPException(400, "resposta muito curta")
+    with psycopg.connect(DATABASE_URL, row_factory=_dict) as con, con.cursor() as cur:
+        r = mod.responde(cur, reclamacao_id, resposta, autor or "órgão responsável")
+        if "erro" in r:
+            raise HTTPException(404, r["erro"])
+        _audita(cur, ator.email, "responder_reclamacao", "reclamacao",
+                str(reclamacao_id), {"autor": autor})
+        con.commit()
+    return r
+
+
+@router.post("/reclamacoes/{reclamacao_id}/prorrogar")
+def admin_prorroga(reclamacao_id: int, justificativa: str,
+                   ator: Ator = Depends(exige_escrita)):
+    """A lei permite uma prorrogacao. Registrar evita acusacao injusta."""
+    from . import reclamacoes as mod
+
+    with psycopg.connect(DATABASE_URL, row_factory=_dict) as con, con.cursor() as cur:
+        r = mod.prorroga(cur, reclamacao_id, justificativa, ator.email)
+        if "erro" in r:
+            raise HTTPException(409, r["erro"])
+        _audita(cur, ator.email, "prorrogar_reclamacao", "reclamacao",
+                str(reclamacao_id), r)
+        con.commit()
+    return r
+
+
 @router.get("/pendencias")
 def pendencias(ator: Ator = Depends(exige_escrita)):
     """Uma chamada que responde 'o que precisa de mim agora'.
@@ -236,6 +319,8 @@ def pendencias(ator: Ator = Depends(exige_escrita)):
               (select count(*) from identidade_pendente where resolvido_em is null)  as identidades,
               (select count(*) from divergencia_tramitacao where resolvido_em is null) as divergencias,
               (select count(*) from atribuicao_cargo where revisado = false)         as atribuicoes,
+              (select count(*) from reclamacao where estado = 'recebida')             as reclamacoes,
+              (select count(*) from reclamacao where estado = 'sem_resposta')         as sem_resposta,
               (select count(*) from ente where nivel='municipio'
                  and not exists (select 1 from mandato m
                                   where m.ente_codigo = ente.codigo_ibge
@@ -303,9 +388,9 @@ try{ $('#tok').value=tok() }catch(e){}
 $('#tok').addEventListener('change',e=>{try{sessionStorage.setItem('tok',e.target.value)}catch(_){}});
 
 const FILAS=[
- ['alertas','Alertas'],['divergencias','Divergências'],
+ ['reclamacoes','Reclamações'],['alertas','Alertas'],['divergencias','Divergências'],
  ['atribuicoes','Textos em revisão'],['identidades','Identidades']];
-let aba='alertas', contagem={};
+let aba='reclamacoes', contagem={};
 
 async function api(url,metodo='GET'){
   const r=await fetch(url,{method:metodo,headers:{'Authorization':'Bearer '+$('#tok').value}});
@@ -340,6 +425,7 @@ async function desenha(){
     if(aba==='divergencias') return pinta(await api('/admin/divergencias'),rDiv,notaDiv);
     if(aba==='atribuicoes')  return pinta(await api('/admin/atribuicoes'),rAtrib,notaAtrib);
     if(aba==='identidades')  return pinta(await api('/admin/identidades'),rIdent);
+    if(aba==='reclamacoes')  return pinta(await api('/admin/reclamacoes?estado=todas'),rRecl,notaRecl);
   }catch(e){ $('#corpo').innerHTML='<p class="vazio">erro: '+esc(e.message)+'</p>'; }
 }
 function pinta(d,render,nota){
@@ -419,6 +505,60 @@ async function mandar(id,decisao,corpo){
   try{ await api(`/admin/atribuicoes/${id}/${decisao}`+(q?'?'+q:''),'POST');
        const el=document.getElementById('at'+id); if(el) el.remove();
        contagem=await api('/admin/pendencias'); abas();
+  }catch(e){ $('#msg').textContent='erro: '+e.message; }
+}
+function notaRecl(d){
+  return `<div class="nota"><strong>A fila que exige ação é a de «recebida».</strong>
+    Enquanto a reclamação não é encaminhada ao órgão, o prazo legal de 30 dias
+    da Lei 13.460/2017 nem começa a correr — e a página pública diz isso ao
+    cidadão. Encaminhe pelo canal que existir e cole aqui a resposta no texto
+    em que ela vier, sem resumir.
+    ${(d.por_estado||[]).map(e=>'<span class="tag">'+esc(e.estado)+': '+e.total+'</span>').join(' ')}</div>`;
+}
+function rRecl(r){
+  const venceu = r.estado==='sem_resposta';
+  const prazo = r.prorrogado_ate || r.prazo_resposta;
+  return `<div class="item" ${venceu?'data-alerta':''} id="rc${r.id}">
+    <h3>${esc(r.titulo)}</h3>
+    <p>${esc((r.descricao||'').slice(0,240))}</p>
+    <div class="tags">
+      <span class="tag">${esc(r.protocolo)}</span>
+      <span class="tag">${esc(r.municipio)}/${esc(r.uf)}</span>
+      <span class="tag">${esc(r.tema)}</span>
+      <span class="tag">${esc(r.estado)}</span>
+      ${r.destino_nome?'<span class="tag">para '+esc(r.destino_nome)+'</span>':''}
+      ${prazo?'<span class="tag">prazo '+esc(prazo)+'</span>':''}
+      <span class="tag">${r.canais} canal(is) cadastrado(s)</span>
+    </div>
+    ${r.estado==='recebida' ? `<div class="acoes">
+        <button class="p" data-url="/admin/reclamacoes/${r.id}/encaminhar?como=ouvidoria"
+                data-alvo="rc${r.id}">Encaminhar</button>
+      </div>` : ''}
+    ${(r.estado==='encaminhada'||r.estado==='sem_resposta') ? `
+      <textarea id="rr${r.id}" placeholder="cole aqui a resposta do órgão, no texto em que veio"></textarea>
+      <div class="acoes">
+        <button class="p" onclick="responderRecl(${r.id})">Publicar resposta</button>
+        ${r.prorrogado ? '' :
+          `<button onclick="prorrogarRecl(${r.id})">Registrar prorrogação</button>`}
+      </div>` : ''}
+    <a href="/reclamacoes/${esc(r.protocolo)}" target="_blank"><button>Ver na API</button></a>
+    </div>`;
+}
+async function responderRecl(id){
+  const txt=$('#rr'+id).value.trim();
+  if(txt.length<10){ $('#msg').textContent='resposta muito curta'; return; }
+  try{
+    await api(`/admin/reclamacoes/${id}/responder?resposta=${encodeURIComponent(txt)}`,'POST');
+    const el=document.getElementById('rc'+id); if(el) el.remove();
+    contagem=await api('/admin/pendencias'); abas();
+  }catch(e){ $('#msg').textContent='erro: '+e.message; }
+}
+async function prorrogarRecl(id){
+  const j=prompt('Justificativa da prorrogação (a lei exige uma):');
+  if(!j) return;
+  try{
+    await api(`/admin/reclamacoes/${id}/prorrogar?justificativa=${encodeURIComponent(j)}`,'POST');
+    desenha();
   }catch(e){ $('#msg').textContent='erro: '+e.message; }
 }
 function rIdent(i){

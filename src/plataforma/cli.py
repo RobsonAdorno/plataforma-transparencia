@@ -180,6 +180,26 @@ def cmd_importar(args):
         print("\n  simulação apenas. Repita com --confirmar para gravar.")
 
 
+def cmd_prazos(args):
+    """Vence o prazo das reclamacoes nao respondidas. Para rodar todo dia.
+
+    Sem isso a reclamacao fica parada em 'encaminhada' depois do prazo e a tela
+    diz "aguardando resposta" para algo que ja esta vencido - que e justamente
+    a mentira que esta feature existe para evitar.
+    """
+    import psycopg
+    from psycopg.rows import dict_row
+    from . import reclamacoes
+    from .config import DATABASE_URL
+
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as con, con.cursor() as cur:
+        r = reclamacoes.vence_prazos(cur)
+        con.commit()
+    print(json.dumps(r, ensure_ascii=False, indent=1))
+    if not r["venceram"]:
+        print("  nenhum prazo venceu hoje.")
+
+
 def cmd_templates(args):
     from . import importador
     for caminho in importador.gera_templates(args.destino):
@@ -221,6 +241,8 @@ def main(argv=None):
     im.add_argument("--entidade", required=True); im.add_argument("--arquivo", required=True)
     im.add_argument("--ator", default="cli"); im.add_argument("--confirmar", action="store_true")
     im.set_defaults(func=cmd_importar)
+    pz = sub.add_parser("prazos", help="vence o prazo das reclamacoes sem resposta")
+    pz.set_defaults(func=cmd_prazos)
     tp = sub.add_parser("templates", help="regera os CSV de exemplo a partir das Specs")
     tp.add_argument("--destino", default="templates")
     tp.set_defaults(func=cmd_templates)

@@ -5,7 +5,7 @@ dinheiro público — a partir das fontes oficiais.
 
 Arquitetura e decisões: https://claude.ai/artifact/CqwwuhRpr44FmD6G8MhBoC
 
-## Estado atual — Fases 0 a 4
+## Estado atual — Fases 0 a 5
 
 Pipeline completo, carregando em PostgreSQL:
 
@@ -28,6 +28,9 @@ Pipeline completo, carregando em PostgreSQL:
 | Conteúdo educativo | 78 atribuições de cargo, todas com artigo citado |
 | Reconhecimento de etapa | 95,3% por código, 4,7% por regra de texto (a parte frágil) |
 | Fontes levantadas | federal testado; 4 de 27 estados levantados; 510 municípios com diário indexado |
+| Geometria do mapa | 27 estados, 5.570 municípios, 2,4 MB no total (91 KB por estado, carregados um a um) |
+| Roteamento de reclamação | 40 temas, nas três esferas, com o artigo citado |
+| Escalonamento | 14 passos legais para quando o órgão não responde |
 
 **513 de 513 deputados ligados ao TSE**, sendo 511 por CPF e 2 por nome dentro
 da mesma UF. Fila de revisão vazia.
@@ -343,6 +346,101 @@ A simulação (sem `--confirmar`) executa os upserts de verdade e desfaz com
 `rollback`. Conferir só o formato das colunas não provava nada — o erro caro é
 referencial, e ele só aparece quando o `insert` roda.
 
+## Três abas: Mapa, Leis, Reclamações
+
+A navegação foi reduzida a três entradas. **Cargos**, **Congresso** e
+**Cobertura** continuam existindo, mas entram de dentro — do painel do
+município, das páginas de lei e do roteamento da reclamação — onde a informação
+aparece no momento em que ela ensina, em vez de virar uma aba que ninguém abre.
+
+### O mapa agora desce até a cidade
+
+Três níveis num componente só: Brasil → estado → município.
+
+A malha de municípios de cada estado é um arquivo em `public/malhas/{UF}.json`,
+buscado no clique. `scripts/gera_malhas.py` reduz a malha do IBGE em uma ordem
+de grandeza: projeta para um viewBox próprio do estado, simplifica com
+Douglas-Peucker em unidades de tela (não em graus, que distorcem com a
+latitude) e arredonda para inteiro. Minas sai de 1,82 MB para 296 KB com os 853
+municípios inteiros; a média é 91 KB por estado. Carregar os 27 de uma vez
+seriam 2,4 MB para ver um.
+
+A armadilha que já tinha custado tempo no mapa do Brasil está documentada no
+script: anel fechado tem o primeiro ponto igual ao último, e Douglas-Peucker
+sobre um segmento de comprimento zero descarta o anel inteiro. A correção é
+partir o anel no ponto mais distante do início.
+
+Rótulos: a sigla de cada estado sempre visível, e os oito que não têm espaço
+interno (RN, PB, PE, AL, SE, ES, RJ, DF) saem para a margem com linha-guia.
+Nome do município só sob o cursor — 853 rótulos simultâneos em Minas não
+seriam legíveis em tela nenhuma.
+
+**Um município sem geometria:** Boa Esperança do Norte (MT, 5101837), criado
+recentemente, ainda não tem malha publicada pelo IBGE. Ele aparece na busca e
+na lista do estado, só não é clicável no mapa — o mesmo município que já tinha
+sido silenciosamente descartado pelo carregador antes.
+
+## Reclamações
+
+O cidadão descreve o problema e a plataforma descobre de quem é. O roteamento
+sai da tabela `competencia`, a mesma que alimenta o conteúdo sobre o limite de
+cada cargo — não por economia de tabela, mas para garantir que a plataforma
+roteia pelo mesmo critério que ensina. Se um dia ela mandar reclamação de poste
+ao deputado federal, a página do deputado federal também estará errada, e as
+duas se consertam de uma vez.
+
+São 40 temas. Alguns têm mais de um endereço certo, e isso não é defeito: saúde
+de média complexidade é competência comum (CF art. 23, II), então a tela mostra
+estado **e** União em vez de escolher um e errar metade das vezes.
+
+### O prazo não é nosso
+
+A Lei 13.460/2017 trata a reclamação como "manifestação" (art. 2º, V) e obriga
+a ouvidoria a enviar a decisão administrativa final em **30 dias, prorrogáveis
+uma vez** por igual período com justificativa (art. 16). A plataforma conta
+esse prazo e registra a prorrogação — acusar de omissa uma prefeitura que usou
+um direito legal seria o mesmo erro de acusar câmara que está dentro do teto.
+
+`plataforma.cli prazos` roda todo dia e passa para `sem_resposta` o que venceu.
+Sem isso a tela diria "aguardando resposta" para algo já vencido, que é
+exatamente a mentira que a feature existe para evitar.
+
+### O que fazer quando não respondem
+
+Catorze passos, por esfera, do mais simples ao mais pesado, cada um com base
+legal e prazo. No município:
+
+1. **Ouvidoria da prefeitura** — 30 dias (Lei 13.460/2017, art. 16)
+2. **Pedido pela LAI** — 20 + 10 dias, com recurso definido (Lei 12.527/2011, art. 11 e 15)
+3. **Vereador** — requerimento de informação; fiscalizar é função da Câmara (CF art. 31)
+4. **Ministério Público estadual** — inquérito civil e ação civil pública (CF art. 129, II)
+5. **Tribunal de Contas** — só quando há dinheiro identificável (CF art. 31, §1º)
+6. **Defensoria Pública** — quando o problema já é lesão a direito seu (CF art. 134)
+
+A ordem importa: mandar o cidadão direto ao Ministério Público por um poste
+queimado desperdiça o instrumento e desgasta o canal.
+
+### A primeira escrita pública da API
+
+Até aqui a API pública não escrevia nada, e o comentário no topo do arquivo
+dizia isso. Deixou de ser verdade: reclamação é escrita pública por natureza,
+e exigir cadastro para reclamar do poste da rua filtraria justamente quem mais
+precisa do canal.
+
+Há exatamente uma rota de escrita pública, `POST /reclamacoes`, tratada como
+superfície hostil — valida tamanho e formato antes de tocar o banco, não aceita
+marcação, e o cliente não escolhe estado, protocolo, prazo nem destino.
+
+**Falta antes de abrir para a internet:** limite de taxa por origem e prova de
+humanidade. O contador em memória no código segura abuso acidental e nada mais
+— com dois processos de uvicorn já não conta certo. Isso é trabalho de CDN e de
+captcha.
+
+A identidade do cidadão fica fora: guardamos o mínimo para notificar e um hash
+com sal para evitar duplicata, e o nome só aparece se a pessoa marcar.
+Reclamação revela onde a pessoa mora e do que ela reclama — é dado sensível,
+não cadastro.
+
 ## Leis estaduais e municipais
 
 A API da Câmara cobre o federal. Acima disso o Brasil não tem padrão, e a
@@ -404,8 +502,9 @@ coletamos", nunca "a assembleia não legislou".
 
 ## Próximo passo
 
-Verificação real do Firebase (depende das credenciais do projeto) e o primeiro
-conector estadual. Minas Gerais é o melhor candidato: API testada, com
+Limite de taxa e captcha na rota pública de reclamação, antes de qualquer
+exposição à internet. Depois, a verificação real do Firebase (depende das
+credenciais do projeto) e o primeiro conector estadual. Minas Gerais é o melhor candidato: API testada, com
 tramitação, e a `fonte_legislativa` já diz onde está.
 
 Depois, por ordem de retorno: ampliar a janela federal de tramitação para 2027

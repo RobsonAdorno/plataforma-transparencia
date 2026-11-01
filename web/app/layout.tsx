@@ -23,12 +23,15 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <header className="topo">
           <div className="wrap">
             <Link href="/" className="marca">Transparência Política</Link>
+            {/* Tres abas, como pedido. Cargos, Congresso e Cobertura nao
+                desaparecem: entram de dentro - do painel do municipio, das
+                paginas de lei e do roteamento da reclamacao - onde a
+                informacao aparece no momento em que ela ensina, em vez de
+                virar uma aba que ninguem abre. */}
             <nav>
               <Link href="/">Mapa</Link>
-              <Link href="/congresso">Congresso</Link>
               <Link href="/leis">Leis</Link>
-              <Link href="/cargos">Cargos</Link>
-              <Link href="/cobertura">Cobertura</Link>
+              <Link href="/reclamacoes">Reclamações</Link>
             </nav>
           </div>
         </header>

@@ -1,15 +1,38 @@
-"""API de leitura. Publica, sem autenticacao e cacheavel.
+"""API publica, sem autenticacao e cacheavel.
 
-Nada aqui escreve. Escrita e coisa do importador e do painel de administracao,
-que vivem em outro processo com outra credencial.
+Era so de leitura, e o comentario aqui dizia isso. Deixou de ser por um motivo
+que nao tem contorno: reclamacao de cidadao e escrita publica por natureza. Ou
+a pessoa escreve sem conta, ou o canal nao existe - e exigir cadastro para
+reclamar do poste da rua seria filtrar justamente quem mais precisa do canal.
+
+Entao ha exatamente UMA rota de escrita publica, POST /reclamacoes, e ela e
+tratada como superficie hostil:
+
+  - valida tamanho e formato antes de tocar o banco (modelo Pydantic);
+  - nao aceita HTML, so texto;
+  - grava sempre no mesmo estado inicial, sem deixar o cliente escolher
+    estado, protocolo, prazo nem destino;
+  - nao devolve nada que nao seja do proprio registro criado.
+
+O que FALTA e precisa existir antes de abrir para a internet: limite de taxa
+por origem e prova de humanidade. O contador em memoria aqui embaixo segura
+abuso acidental e nada mais - com dois processos de uvicorn ele ja nao conta
+certo. Isso e trabalho de CDN e de captcha, nao de codigo de aplicacao, e esta
+anotado como pendencia no README.
+
+Escrita administrativa continua fora daqui, no painel, com credencial propria.
 """
 from __future__ import annotations
 
+import re
+import time
+from collections import deque
 from contextlib import contextmanager
 
 import psycopg
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException, Query, Request
 from psycopg.rows import dict_row
+from pydantic import BaseModel, Field, field_validator
 
 from .config import DATABASE_URL
 
@@ -257,6 +280,168 @@ def votacao_detalhe(votacao_id: int):
              where v.votacao_id = %s order by p.nome_urna""", (votacao_id,))
         v["votos"] = cur.fetchall()
         return v
+
+
+# ------------------------------------------------------------- reclamacoes
+
+MAX_POR_HORA = 5
+_recentes: dict[str, deque] = {}
+_HTML = re.compile(r"<[^>]*>")
+
+
+def _trava(request: Request) -> None:
+    """Limite de taxa por origem, em memoria. Mitigacao, nao protecao.
+
+    Existe para que um script distraido nao enche o banco. Nao substitui
+    limite no CDN: reinicia com o processo e nao e compartilhado entre
+    trabalhadores do uvicorn. Documentado como pendencia de proposito.
+    """
+    origem = (request.client.host if request.client else "?")
+    agora = time.time()
+    fila = _recentes.setdefault(origem, deque())
+    while fila and agora - fila[0] > 3600:
+        fila.popleft()
+    if len(fila) >= MAX_POR_HORA:
+        raise HTTPException(429, "muitas reclamações da mesma origem em uma hora")
+    fila.append(agora)
+
+
+class NovaReclamacao(BaseModel):
+    ente_codigo: str = Field(min_length=1, max_length=7)
+    tema: str = Field(min_length=3, max_length=120)
+    titulo: str = Field(min_length=6, max_length=140)
+    descricao: str = Field(min_length=20, max_length=4000)
+    local_referencia: str | None = Field(default=None, max_length=200)
+    autor_nome: str | None = Field(default=None, max_length=120)
+    autor_email: str | None = Field(default=None, max_length=160)
+    exibir_autor: bool = False
+
+    @field_validator("titulo", "descricao", "local_referencia", "autor_nome")
+    @classmethod
+    def sem_marcacao(cls, v: str | None) -> str | None:
+        """Texto e texto. A reclamacao vai para uma pagina publica e para o
+        corpo de um e-mail: aceitar marcacao aqui seria convidar injecao."""
+        if v is None:
+            return v
+        limpo = _HTML.sub("", v).strip()
+        if not limpo:
+            raise ValueError("texto vazio depois de remover marcação")
+        return limpo
+
+
+@app.get("/reclamacoes/temas")
+def reclamacao_temas():
+    """Os temas pelos quais a reclamação é roteada, com a esfera de cada um."""
+    from . import reclamacoes as R
+
+    with cursor() as cur:
+        return R.temas(cur)
+
+
+@app.get("/reclamacoes/rota")
+def reclamacao_rota(tema: str, ente: str = Query(..., min_length=1, max_length=7)):
+    """De quem é o problema, antes de a pessoa escrever.
+
+    Serve para a tela já dizer "isso é da prefeitura, e o prefeito hoje é X"
+    enquanto a pessoa digita — que é o momento em que a informação ensina.
+    """
+    from . import reclamacoes as R
+
+    with cursor() as cur:
+        rota = R.roteia(cur, tema, ente)
+        if rota["responsaveis"]:
+            rota["escalonamento"] = R.escalonamento(
+                cur, rota["responsaveis"][0]["esfera"])
+        return rota
+
+
+@app.get("/reclamacoes/escalonamento/{esfera}")
+def reclamacao_escalonamento(esfera: str):
+    """O que fazer quando não respondem. Cada passo com base legal e prazo."""
+    from . import reclamacoes as R
+
+    e = esfera.upper()
+    if e not in ("MUNICIPAL", "ESTADUAL", "FEDERAL"):
+        raise HTTPException(404, "esfera inválida")
+    with cursor() as cur:
+        return {"esfera": e, "passos": R.escalonamento(cur, e)}
+
+
+@app.get("/reclamacoes")
+def reclamacao_lista(ente: str | None = None, estado: str | None = None,
+                     limite: int = Query(30, le=100)):
+    """As reclamações públicas. Inclui as sem resposta — são o achado."""
+    with cursor() as cur:
+        cur.execute("""
+            select r.protocolo, r.titulo, r.tema, r.estado, r.criado_em,
+                   r.prazo_resposta, r.prorrogado_ate, r.respondido_em,
+                   r.esfera_responsavel, r.cargo_destino, r.destino_nome,
+                   r.resolvido, e.nome as municipio, e.uf,
+                   case when r.exibir_autor then r.autor_nome end as autor
+              from reclamacao r join ente e on e.codigo_ibge = r.ente_codigo
+             where r.publica
+               and (%s::text is null or r.ente_codigo = %s)
+               and (%s::text is null or r.estado = %s)
+             order by r.criado_em desc limit %s""",
+                    (ente, ente, estado, estado, limite))
+        return cur.fetchall()
+
+
+@app.get("/reclamacoes/{protocolo}")
+def reclamacao(protocolo: str):
+    from . import reclamacoes as R
+
+    with cursor() as cur:
+        cur.execute("""
+            select r.protocolo, r.titulo, r.descricao, r.tema, r.estado,
+                   r.local_referencia, r.criado_em, r.encaminhado_em,
+                   r.prazo_resposta, r.prorrogado, r.prorrogado_ate,
+                   r.respondido_em, r.resposta, r.resposta_autor, r.resolvido,
+                   r.esfera_responsavel, r.cargo_destino, r.destino_nome,
+                   r.destino_orgao, r.destino_metodo, r.ente_codigo,
+                   e.nome as municipio, e.uf,
+                   case when r.exibir_autor then r.autor_nome end as autor
+              from reclamacao r join ente e on e.codigo_ibge = r.ente_codigo
+             where r.protocolo = upper(%s) and r.publica""", (protocolo,))
+        base = cur.fetchone()
+        if base is None:
+            raise HTTPException(404, "protocolo não encontrado")
+        cur.execute("""select tipo, descricao, ator, criado_em
+                         from reclamacao_evento
+                        where reclamacao_id = (select id from reclamacao
+                                                where protocolo = upper(%s))
+                        order by criado_em""", (protocolo,))
+        base["linha_do_tempo"] = cur.fetchall()
+        if base["esfera_responsavel"]:
+            base["escalonamento"] = R.escalonamento(cur, base["esfera_responsavel"])
+        # Dias de atraso, calculado aqui para a tela nao ter que saber a regra.
+        from datetime import date as _d
+        limite = base["prorrogado_ate"] or base["prazo_resposta"]
+        base["dias_de_atraso"] = (
+            (_d.today() - limite).days
+            if limite and base["estado"] in ("encaminhada", "sem_resposta")
+               and limite < _d.today() else 0)
+        return base
+
+
+@app.post("/reclamacoes", status_code=201)
+def abre_reclamacao(nova: NovaReclamacao, request: Request):
+    """A única escrita pública da API. Ver a explicação no topo do arquivo."""
+    from . import reclamacoes as R
+
+    _trava(request)
+    with psycopg.connect(DATABASE_URL, row_factory=dict_row) as con, con.cursor() as cur:
+        cur.execute("select 1 from ente where codigo_ibge=%s", (nova.ente_codigo,))
+        if cur.fetchone() is None:
+            raise HTTPException(400, "município ou estado inexistente")
+        r = R.abre(cur, ente_codigo=nova.ente_codigo, tema=nova.tema,
+                   titulo=nova.titulo, descricao=nova.descricao,
+                   local_referencia=nova.local_referencia,
+                   autor_nome=nova.autor_nome, autor_email=nova.autor_email,
+                   exibir_autor=nova.exibir_autor)
+        con.commit()
+    return {"protocolo": r["protocolo"], "encaminhavel": r["encaminhavel"],
+            "roteamento": r["roteamento"]}
 
 
 @app.get("/fontes")

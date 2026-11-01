@@ -1,5 +1,5 @@
 import Link from "next/link";
-import MapaBrasil from "./components/MapaBrasil";
+import MapaNavegavel from "./components/MapaNavegavel";
 import { listarUfs } from "./lib/api";
 
 export const revalidate = 900;
@@ -13,11 +13,12 @@ export default async function Home() {
         Dados oficiais · Câmara e TSE
       </p>
       <h1>Quem representa você, e o que faz com o seu dinheiro</h1>
-      <p className="muted" style={{ maxWidth: "58ch", margin: "12px 0 26px" }}>
-        Comece pelo seu estado. Nenhuma lista longa: o país cabe em 27 alvos, e
-        cada clique reduz o problema em vez de aumentá-lo.
+      <p className="muted" style={{ maxWidth: "60ch", margin: "12px 0 26px" }}>
+        Comece pelo seu estado, desça até a sua cidade. Nenhuma lista longa: o
+        país cabe em 27 alvos, e cada clique reduz o problema em vez de
+        aumentá-lo. Onde não houver informação, a página diz isso — e diz por quê.
       </p>
-      <MapaBrasil ufs={ufs} />
+      <MapaNavegavel ufs={ufs} />
 
       {/* Duas portas que o mapa nao abre: a lei em movimento e o limite do
           cargo. Sem elas a plataforma responde "quem" e deixa "o que ele pode
@@ -37,16 +38,16 @@ export default async function Home() {
             texto proposto.
           </p>
         </Link>
-        <Link href="/cargos" className="cartao"
+        <Link href="/reclamacoes" className="cartao"
               style={{ padding: 18, textDecoration: "none", color: "inherit" }}>
-          <span className="selo">O limite de cada cargo</span>
+          <span className="selo">Reclamações</span>
           <h2 style={{ fontSize: 19, margin: "9px 0 0" }}>
             Cobrar da pessoa certa
           </h2>
           <p className="muted" style={{ fontSize: 14, margin: "8px 0 0" }}>
-            Vereador não asfalta rua, prefeito não comanda a polícia, deputado
-            federal não tapa buraco de bairro. O que cada um pode e não pode,
-            com o artigo citado.
+            Descreva o problema e a plataforma descobre de quem é, conta o prazo
+            legal de resposta e, se não responderem, diz exatamente o que fazer
+            em seguida.
           </p>
         </Link>
       </div>
