@@ -3,6 +3,8 @@
   python -m plataforma.cli ingest-camara --ano 2026
   python -m plataforma.cli ingest-tse --ano 2022
   python -m plataforma.cli resolve --ano 2022
+  python -m plataforma.cli leis --inicio 2026-10-20 --fim 2026-10-23
+  python -m plataforma.cli cargos
 """
 from __future__ import annotations
 
@@ -147,6 +149,28 @@ def cmd_alertas(args):
 
 
 
+def cmd_leis(args):
+    from . import leis
+    r = leis.principal(args.inicio, args.fim, com_senado=not args.sem_senado)
+    div = r.pop("divergencias", [])
+    print(json.dumps(r, ensure_ascii=False, indent=1))
+    # Divergencia e o sinal de que o mapeamento de etapas regrediu. Imprimir
+    # junto do resumo em vez de deixar so no banco: quem roda a carga precisa
+    # ver na hora, nao descobrir numa consulta depois.
+    if div:
+        print(f"\nDIVERGENCIAS DE DESFECHO ({len(div)}) - a fonte declara um "
+              f"desfecho que a trilha nao achou:")
+        for ident, falta in div[:20]:
+            print(f"  {ident:<18} esperava {falta}")
+        print("  fila completa: select * from divergencia_tramitacao "
+              "where resolvido_em is null;")
+
+
+def cmd_cargos(args):
+    from . import cargos
+    cargos.principal()
+
+
 def cmd_importar(args):
     from . import importador
     rel = importador.processa(args.entidade, args.arquivo, args.ator,
@@ -180,6 +204,13 @@ def main(argv=None):
     al.add_argument("--estado", default="rascunho")
     al.add_argument("--id", type=int)
     al.set_defaults(func=cmd_alertas)
+    le = sub.add_parser("leis", help="tramitacao, autoria e desfecho das proposicoes")
+    le.add_argument("--inicio"); le.add_argument("--fim")
+    le.add_argument("--sem-senado", action="store_true",
+                    help="pula o cruzamento com o Senado (mais rapido, menos confiavel)")
+    le.set_defaults(func=cmd_leis)
+    cg = sub.add_parser("cargos", help="populacao do IBGE e conferencia do art. 29")
+    cg.set_defaults(func=cmd_cargos)
     im = sub.add_parser("importar")
     im.add_argument("--entidade", required=True); im.add_argument("--arquivo", required=True)
     im.add_argument("--ator", default="cli"); im.add_argument("--confirmar", action="store_true")

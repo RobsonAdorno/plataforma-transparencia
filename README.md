@@ -5,7 +5,7 @@ dinheiro público — a partir das fontes oficiais.
 
 Arquitetura e decisões: https://claude.ai/artifact/CqwwuhRpr44FmD6G8MhBoC
 
-## Estado atual — Fases 0 a 3
+## Estado atual — Fases 0 a 4
 
 Pipeline completo, carregando em PostgreSQL:
 
@@ -20,12 +20,49 @@ Pipeline completo, carregando em PostgreSQL:
 | Alertas | 78 rascunhos a partir de 10 meses — cerca de 2 por semana |
 | Entes | 1 união, 27 estados, 5.571 municípios |
 | Eleitos municipais | 58.174 vereadores e 5.568 prefeitos (TSE 2024) |
+| Tramitação | 4.446 etapas em 198 proposições; 2.020 viraram marco, 2.426 eram ruído |
+| Leis concluídas | 3 projetos rastreados do protocolo ao Diário Oficial |
+| População | Censo 2022 e estimativa 2021 nos 5.571 municípios e 27 estados |
+| Conteúdo educativo | 78 atribuições de cargo, todas com artigo citado |
 
 **513 de 513 deputados ligados ao TSE**, sendo 511 por CPF e 2 por nome dentro
 da mesma UF. Fila de revisão vazia.
 
 Além disso: API de leitura em FastAPI (`src/plataforma/api.py`), painel de
-administração e front em Next.js (`web/`).
+administração com quatro filas e front em Next.js (`web/`) com 44 páginas.
+
+### A vida de uma lei
+
+`src/plataforma/tramitacao.py` reduz os 235 tipos de movimentação da Câmara a
+12 marcos que uma cidadã entende, em sete fases do protocolo à sanção. O PL
+1087/2025 tem 153 movimentações e vira 10 blocos legíveis.
+
+**O ponto mais frágil do projeto está aqui, e é documentado no arquivo.** Os
+marcos mais importantes não vêm no código da movimentação: "Remessa ao Senado
+Federal" veio no código genérico 190 (Expedição de Documento) e "remessa da
+matéria à sanção" veio no 100 (Apresentação de Proposição). Existe um código
+128 para a ida ao Senado — aquele PL não usou. Então o reconhecimento tem duas
+camadas, código e texto, e cada etapa reconhecida por texto fica marcada com
+`metodo='texto'` no banco: são 8% dos marcos, e são exatamente as que param de
+funcionar caladas se a fonte reescrever a frase.
+
+Contra isso há três defesas:
+
+```bash
+./.venv/bin/python scripts/testa_marcos.py          # 21 casos reais, sem rede
+./.venv/bin/python scripts/valida_tramitacao.py --amostra 180   # acordo com a API ao vivo
+```
+
+e a tabela `divergencia_tramitacao`, que registra toda proposição cuja situação
+declarada pela fonte não aparece na trilha. Na primeira rodada ela acusou três
+divergências em 70 proposições, e as três eram defeito meu.
+
+O Senado entra por `/dadosabertos/processo` — e não pelo `/materia`, que foi
+marcado para desativação em 01/02/2026 e ainda responde, o que torna fácil
+construir em cima dele por engano. O serviço novo entrega estruturado o que na
+Câmara só existe como texto livre: `normaGerada`, `situacaoAtual`, `objetivo`.
+Quando as duas fontes divergem sobre o número da lei, vale a do Senado — campo
+publicado é mais confiável que expressão regular.
 
 ## Como rodar
 
@@ -37,7 +74,18 @@ export PYTHONPATH=src
 ./.venv/bin/python -m plataforma.cli ingest-camara --ano 2026
 ./.venv/bin/python -m plataforma.cli ingest-tse    --ano 2022
 ./.venv/bin/python -m plataforma.cli resolve       --ano 2022
+
+# fase 4: a vida das leis e o limite de cada cargo
+./.venv/bin/python -m plataforma.cli leis --inicio 2026-10-20 --fim 2026-10-23
+./.venv/bin/python -m plataforma.cli cargos
 ```
+
+`leis` é a única carga pensada para rodar todo dia. Ela usa o filtro por data
+de *tramitação* da API: numa janela de dez dias voltam ~4.400 proposições, e
+entre elas aparece coisa apresentada em 2003 que se mexeu agora. Sem isso a
+atualização diária teria que varrer o acervo inteiro; com isso são ~440
+proposições por dia, uns minutos de execução. Em espaço, ~420 mil etapas por
+ano a ~700 bytes dão cerca de 300 MB/ano — dez anos de acervo cabem em 10 GB.
 
 Os brutos caem em `data/bronze/<fonte>/<data>/`, cada um com `.manifest.json`
 contendo URL, hash e horário da coleta. O derivado vai em `data/derivado/`.
@@ -209,9 +257,58 @@ só decide o que a pessoa pode fazer, sempre verificando no servidor.
 O cidadão nunca passa por aqui: o app funciona anônimo, e onde a pessoa mora
 fica no aparelho, não no servidor.
 
+## O limite de cada cargo
+
+É o objetivo central da plataforma e a única parte sem API: texto escrito por
+gente, com o artigo citado ao lado. Fica em `db/009_atribuicoes_seed.sql`, nasce
+com `revisado=false` e só perde o aviso de "em revisão" na tela pública depois
+que alguém aprovar no painel.
+
+Duas honestidades que o schema carrega:
+
+- O limite do vereador não está só na Constituição. O art. 29 manda cada
+  município se reger pela sua Lei Orgânica — são 5.571 textos. A coluna
+  `abrangencia` separa o que vale para todo o país do que depende da lei local.
+- O critério do "não pode" não é proibição jurídica: é o que as pessoas cobram
+  de quem não tem como atender. Vereador não asfalta rua, prefeito não comanda
+  a Polícia Militar, deputado federal não tapa buraco de bairro.
+
+### Um erro que vale guardar
+
+Dois desses limites são número, não texto: o art. 29, IV fixa o teto de
+cadeiras por faixa de população, em 24 degraus. Com a população do IBGE, dá
+para conferir as 5.571 câmaras do país.
+
+A primeira versão comparava contra o Censo 2022 e acusava **34 câmaras** de
+estourar o teto. Estava errada. O número de vagas é fixado *antes* da eleição,
+com a população vigente naquele momento — e entre a estimativa de 2021 e o
+Censo 2022 muitos municípios encolheram. Rio Preto da Eva (AM) caiu de 34.856
+para 24.936 habitantes, o que muda o teto de 13 para 11 cadeiras sem que
+ninguém tenha feito nada.
+
+Trinta das 34 eram legítimas. Publicar aquela lista teria acusado trinta
+câmaras em ordem, com a autoridade de um dado oficial.
+
+O resultado honesto, depois de guardar as duas referências:
+
+| | |
+|---|---|
+| Dentro do teto | 5.513 |
+| Dentro do teto pela população da eleição | 29 |
+| Acima do teto por qualquer referência | 5 |
+| Sem resultado de vereador publicado pelo TSE | 23 |
+
+E as 5 que sobraram não são chamadas de irregulares. Em Braga (RS) o próprio
+arquivo do TSE lista 10 vereadores eleitos — 9 por quociente e 1 por média — numa
+cidade de 3.268 habitantes. Dez é par, e nenhuma das 24 faixas do art. 29 é par.
+A divergência está na fonte, e isso vai para conferência manual, não para a tela
+como acusação.
+
 ## Próximo passo
 
 Verificação real do Firebase (depende das credenciais do projeto), as três
-entidades que faltam no importador, páginas de município e a cobertura
-declarada por município — hoje a ausência de vereador é indistinguível de
-"não publicado".
+entidades que faltam no importador, páginas de município e a cobertura declarada
+por município — hoje a ausência de vereador é indistinguível de "não publicado",
+e são 23 casos. Falta também ampliar a janela de tramitação: há quatro dias
+carregados, e o acervo histórico só se constrói coletando todo dia, porque
+tramitação passada não se reconstrói depois.

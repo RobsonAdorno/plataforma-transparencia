@@ -158,6 +158,59 @@ def proposicoes_por_id(ids: list[str], trabalhadores: int = 6) -> dict[str, dict
     return saida
 
 
+def tramitacoes(id_proposicao: str) -> list[dict]:
+    """O historico completo de uma proposicao, da apresentacao ao desfecho."""
+    return _get(f"proposicoes/{id_proposicao}/tramitacoes")["dados"]
+
+
+def autores(id_proposicao: str) -> list[dict]:
+    """Quem assinou. Nem sempre e parlamentar: pode ser o Poder Executivo, o
+    STF, uma comissao ou a outra casa do Congresso."""
+    return _get(f"proposicoes/{id_proposicao}/autores")["dados"]
+
+
+def proposicoes_que_tramitaram(data_inicio: str, data_fim: str) -> list[dict]:
+    """A chave da coleta incremental.
+
+    dataInicio/dataFim filtram por data de TRAMITACAO, nao de apresentacao.
+    Numa janela de dez dias voltam ~4.400 proposicoes, e entre elas aparece
+    coisa de 2003 que se mexeu agora. Sem isso a atualizacao diaria teria que
+    varrer o acervo inteiro todo dia; com isso sao ~440 proposicoes por dia.
+    """
+    saida: list[dict] = []
+    for ini, fim in _janelas(data_inicio, data_fim):
+        saida.extend(_paginado("proposicoes", dataInicio=ini, dataFim=fim,
+                               itens=100, ordem="ASC", ordenarPor="id"))
+    return saida
+
+
+def _em_lote(fn, ids: list[str], trabalhadores: int = 6,
+             progresso=None) -> dict[str, list[dict]]:
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    saida: dict[str, list[dict]] = {}
+    with ThreadPoolExecutor(max_workers=trabalhadores) as pool:
+        fut = {pool.submit(fn, i): str(i) for i in ids}
+        for n, f in enumerate(as_completed(fut), 1):
+            try:
+                saida[fut[f]] = f.result()
+            except Exception:
+                saida[fut[f]] = []     # falha pontual nao derruba o lote
+            if progresso and n % 200 == 0:
+                progresso(n, len(ids))
+    return saida
+
+
+def tramitacoes_em_lote(ids: list[str], trabalhadores: int = 6,
+                        progresso=None) -> dict[str, list[dict]]:
+    return _em_lote(tramitacoes, ids, trabalhadores, progresso)
+
+
+def autores_em_lote(ids: list[str], trabalhadores: int = 6,
+                    progresso=None) -> dict[str, list[dict]]:
+    return _em_lote(autores, ids, trabalhadores, progresso)
+
+
 def pauta(id_evento: str) -> list[dict]:
     """Materias marcadas para o evento. Vazio e comum: muito evento nao delibera."""
     return _get(f"eventos/{id_evento}/pauta")["dados"]

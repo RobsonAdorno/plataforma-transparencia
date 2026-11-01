@@ -92,3 +92,66 @@ td.n{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
 .grupo{font-family:var(--fonte-mono);font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;
        color:var(--accent);margin:16px 0 4px;padding-top:12px;border-top:1px solid var(--line)}
 .grupo:first-child{margin-top:0;padding-top:0;border-top:0}
+
+/* ---------------------------------------------------------------- leis */
+.abas{display:flex;gap:4px;border-bottom:1px solid var(--line);margin:22px 0 0;flex-wrap:wrap}
+.abas a{font-family:var(--fonte-mono);font-size:11.5px;letter-spacing:.07em;
+        text-transform:uppercase;padding:10px 13px;text-decoration:none;color:var(--muted);
+        border-bottom:2px solid transparent;margin-bottom:-1px}
+.abas a[aria-current]{color:var(--fg);border-bottom-color:var(--accent)}
+.abas a:hover{color:var(--fg)}
+
+.projeto{display:block;padding:15px;border-bottom:1px solid var(--line);text-decoration:none;
+         color:inherit}
+.projeto:last-child{border-bottom:0}
+.projeto:hover{background:var(--surface-2)}
+.projeto h3{font-size:15.5px;line-height:1.3}
+.projeto p{margin:5px 0 0;font-size:13.5px;color:var(--muted);
+           display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+.linha-topo{display:flex;gap:9px;align-items:center;flex-wrap:wrap;margin-bottom:5px}
+
+/* barra do caminho: 7 degraus ate a lei */
+.caminho{display:flex;gap:3px;margin:3px 0}
+.caminho span{height:4px;flex:1;background:var(--line);border-radius:2px}
+.caminho span[data-feito]{background:var(--accent)}
+.caminho[data-morto] span[data-feito]{background:var(--risk)}
+
+/* trilha vertical */
+.trilha{list-style:none;margin:0;padding:0}
+.etapa{display:grid;grid-template-columns:22px 1fr;gap:14px;padding-bottom:22px;position:relative}
+.etapa:not(:last-child)::before{content:"";position:absolute;left:10px;top:20px;bottom:0;
+                                width:2px;background:var(--line)}
+.bola{width:20px;height:20px;border-radius:50%;border:2px solid var(--line);
+      background:var(--surface);margin-top:1px;z-index:1}
+.etapa[data-feito] .bola{background:var(--accent);border-color:var(--accent)}
+.etapa[data-fim] .bola{background:var(--risk);border-color:var(--risk)}
+.etapa[data-futuro] .bola{border-style:dashed}
+.etapa[data-futuro] .rotulo{color:var(--muted)}
+.rotulo{font-family:var(--fonte-titulo);font-weight:700;font-size:15px}
+.quando{font-family:var(--fonte-mono);font-size:11.5px;color:var(--muted);margin-top:2px}
+.porque{font-size:13.5px;color:var(--muted);margin:7px 0 0;max-width:62ch}
+.etapa details{margin-top:9px}
+.etapa summary{font-family:var(--fonte-mono);font-size:11px;letter-spacing:.05em;
+               text-transform:uppercase;color:var(--accent-ink);cursor:pointer}
+.etapa details ol{margin:10px 0 0;padding-left:17px;font-size:13px;color:var(--muted)}
+.etapa details li{margin-bottom:9px}
+
+/* cargos: pode x nao pode */
+.duas{display:grid;gap:18px;grid-template-columns:1fr 1fr}
+@media (max-width:760px){.duas{grid-template-columns:1fr}}
+.lista-reg{list-style:none;margin:0;padding:0}
+.lista-reg li{padding:13px 15px;border-bottom:1px solid var(--line)}
+.lista-reg li:last-child{border-bottom:0}
+.lista-reg p{margin:0;font-size:14.5px}
+.lei-ref{display:block;margin-top:6px;font-family:var(--fonte-mono);font-size:11px;
+         color:var(--muted)}
+.cabeca-pode{padding:12px 15px;border-bottom:1px solid var(--line);
+             font-family:var(--fonte-mono);font-size:11px;letter-spacing:.07em;
+             text-transform:uppercase}
+.cabeca-pode[data-tipo=pode]{color:var(--accent-ink);background:var(--accent-wash)}
+.cabeca-pode[data-tipo=nao]{color:var(--risk);background:color-mix(in srgb,var(--risk) 12%,transparent)}
+.aviso{padding:13px 15px;border:1px solid var(--line);border-left:3px solid var(--risk);
+       border-radius:5px;background:var(--surface);font-size:13.5px;color:var(--muted)}
+.local{display:inline-block;font-family:var(--fonte-mono);font-size:10px;letter-spacing:.06em;
+       text-transform:uppercase;padding:2px 6px;border-radius:3px;border:1px solid var(--line);
+       color:var(--muted);margin-left:7px;vertical-align:1px}

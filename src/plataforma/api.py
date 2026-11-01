@@ -211,6 +211,175 @@ def saude():
         return {"fontes": fontes, "volumes": cur.fetchone()}
 
 
+# ------------------------------------------------------------------- leis
+#
+# Tres estados, tres consultas. A separacao vem do que o cidadao pergunta -
+# "o que vao votar?", "o que estao votando agora?", "o que ja virou lei?" -
+# e nao da estrutura das tabelas.
+
+@app.get("/leis/agenda")
+def leis_agenda(dias: int = Query(21, ge=1, le=90), limite: int = Query(40, le=120)):
+    """Vai ser votada: materia marcada em evento que ainda nao comecou."""
+    with cursor() as cur:
+        cur.execute("""
+            select p.id, p.tipo, p.numero, p.ano, p.ementa, p.marco_atual, p.fase_atual,
+                   e.inicio, e.tipo as evento_tipo, e.descricao as evento,
+                   pi.regime, pi.relator, pi.titulo,
+                   (select count(*) from etapa et where et.proposicao_id = p.id) as etapas
+              from pauta_item pi
+              join evento e     on e.id = pi.evento_id
+              join proposicao p on p.id = pi.proposicao_id
+             where e.inicio between now() and now() + make_interval(days => %s)
+               and coalesce(e.situacao,'') not in ('Cancelada','Encerrada')
+             order by e.inicio, pi.ordem nulls last
+             limit %s""", (dias, limite))
+        return cur.fetchall()
+
+
+@app.get("/leis/agora")
+def leis_agora():
+    """Esta sendo votada: sessao em andamento, com a pauta dela.
+
+    Honestidade que a tela precisa repetir: so 2% das votacoes sao nominais.
+    Estar em pauta numa sessao em andamento nao garante que havera voto
+    individual registrado no fim.
+    """
+    with cursor() as cur:
+        cur.execute("""
+            select e.id as evento_id, e.descricao as evento, e.tipo as evento_tipo,
+                   e.inicio, e.situacao,
+                   p.id, p.tipo, p.numero, p.ano, p.ementa, p.marco_atual, p.fase_atual
+              from evento e
+              left join pauta_item pi on pi.evento_id = e.id
+              left join proposicao p  on p.id = pi.proposicao_id
+             where e.situacao = 'Em Andamento'
+             order by e.inicio desc, pi.ordem nulls last""")
+        return cur.fetchall()
+
+
+@app.get("/leis/votadas")
+def leis_votadas(limite: int = Query(40, le=120), virou_lei: bool = False):
+    """Ja foi votada. Com virou_lei=true, so o que chegou ao Diario Oficial."""
+    with cursor() as cur:
+        cur.execute("""
+            select p.id, p.tipo, p.numero, p.ano, p.ementa,
+                   p.marco_atual, p.fase_atual, p.situacao,
+                   p.norma_tipo, p.norma_numero, p.norma_ano, p.norma_data,
+                   (select max(et.data_hora) from etapa et
+                     where et.proposicao_id = p.id and et.marco is not null) as ultimo_passo
+              from proposicao p
+             where (%s = false or p.norma_numero is not null)
+               and (%s = true  or p.fase_atual >= 3)
+             order by coalesce(p.norma_data, p.atualizado_em) desc nulls last
+             limit %s""", (virou_lei, virou_lei, limite))
+        return cur.fetchall()
+
+
+@app.get("/leis/{proposicao_id}")
+def lei(proposicao_id: int):
+    """Tudo de um projeto: trilha agrupada, autores, relator e desfecho."""
+    from . import tramitacao as T
+
+    with cursor() as cur:
+        cur.execute("""
+            select p.id, p.tipo, p.numero, p.ano, p.ementa, p.situacao, p.cod_situacao,
+                   p.regime, p.apreciacao, p.casa_origem, p.url_integra, p.tramitando,
+                   p.data_apresentacao, p.marco_atual, p.fase_atual,
+                   p.norma_tipo, p.norma_numero, p.norma_ano, p.norma_data
+              from proposicao p where p.id = %s""", (proposicao_id,))
+        base = cur.fetchone()
+        if base is None:
+            raise HTTPException(404, "proposição não encontrada")
+
+        cur.execute("""select nome, tipo, partido, uf, ordem, proponente, papel, pessoa_id
+                         from autoria_proposicao where proposicao_id=%s
+                        order by papel, ordem nulls last""", (proposicao_id,))
+        pessoas = cur.fetchall()
+        base["autores"] = [a for a in pessoas if a["papel"] == "autor"]
+        base["relatores"] = [a for a in pessoas if a["papel"] == "relator"]
+
+        cur.execute("""select fonte, sequencia, data_hora, orgao, cod_tipo, descricao,
+                              despacho, url, marco, fase, metodo
+                         from etapa where proposicao_id=%s
+                        order by data_hora, sequencia nulls last""", (proposicao_id,))
+        etapas = cur.fetchall()
+
+    # Agrupar aqui, e nao no front: a regra de "o que e a mesma etapa" e
+    # conhecimento do dominio e tem que valer igual na web e no app.
+    blocos = T.agrupa([{**e, "dataHora": (e["data_hora"].isoformat()
+                                          if e["data_hora"] else None)}
+                       for e in etapas])
+    base["trilha"] = [{k: v for k, v in b.items() if k != "itens"} | {
+        "itens": [{"data_hora": i.get("dataHora"), "orgao": i.get("orgao"),
+                   "descricao": i.get("descricao"), "despacho": i.get("despacho"),
+                   "url": i.get("url"), "fonte": i.get("fonte"),
+                   "metodo": i.get("metodo")} for i in b["itens"]]}
+        for b in blocos]
+    base["movimentacoes_totais"] = len(etapas)
+    base["caminho"] = [{"marco": m, "fase": T.FASES[m], "rotulo": T.ROTULOS[m],
+                        "explicacao": T.EXPLICACOES.get(m)}
+                       for m in ("APRESENTACAO", "COMISSOES", "PLENARIO_ORIGEM",
+                                 "CASA_REVISORA", "PLENARIO_REVISORA", "SANCAO", "LEI")]
+    return base
+
+
+# ------------------------------------------------------------------ cargos
+#
+# O objetivo central da plataforma: o limite de cada cargo publico.
+
+@app.get("/cargos")
+def cargos():
+    with cursor() as cur:
+        cur.execute("""select codigo, nome, plural, esfera, poder, mandato_anos, resumo
+                         from cargo order by ordem""")
+        return cur.fetchall()
+
+
+@app.get("/cargos/{codigo}")
+def cargo(codigo: str):
+    with cursor() as cur:
+        cur.execute("""select codigo, nome, plural, esfera, poder, mandato_anos, resumo
+                         from cargo where codigo = upper(%s)""", (codigo,))
+        base = cur.fetchone()
+        if base is None:
+            raise HTTPException(404, "cargo não encontrado")
+        cur.execute("""select natureza, texto, base_legal, abrangencia, ordem, revisado
+                         from atribuicao_cargo where cargo = upper(%s)
+                        order by natureza, ordem""", (codigo,))
+        itens = cur.fetchall()
+        for n in ("pode", "nao_pode", "limite"):
+            base[n] = [i for i in itens if i["natureza"] == n]
+        # Quantos existem hoje no Brasil, do proprio banco. Numero concreto
+        # ancora o texto: "57.000 vereadores" e mais util que "os vereadores".
+        cur.execute("""select count(*) from mandato
+                        where cargo = upper(%s) and situacao <> 'encerrado'""", (codigo,))
+        base["em_exercicio"] = cur.fetchone()["count"]
+        base["revisado"] = all(i["revisado"] for i in itens) if itens else False
+        return base
+
+
+@app.get("/cargos/vereador/camaras")
+def camaras_art29(limite: int = Query(60, le=200)):
+    """Conferencia das camaras contra o teto do art. 29, IV.
+
+    Devolve a contagem por estado e so a lista do que nao fecha por nenhuma
+    referencia de populacao. Nao e laudo de irregularidade: a divergencia pode
+    estar na fonte, e a tela precisa dizer isso.
+    """
+    from .cargos import CONFERE_ART29
+
+    with cursor() as cur:
+        cur.execute(f"select estado, count(*) as total from ({CONFERE_ART29}) t"
+                    " group by 1 order by 2 desc")
+        estados = cur.fetchall()
+        cur.execute(f"""select nome, uf, codigo_ibge, populacao, populacao_referencia,
+                               cadeiras, teto_censo, teto_estimativa, teto_aplicavel
+                          from ({CONFERE_ART29}) t where estado='a_conferir'
+                         order by cadeiras - teto_aplicavel desc limit %s""", (limite,))
+        return {"por_estado": estados, "a_conferir": cur.fetchall(),
+                "base_legal": "CF/88, art. 29, IV (redação da EC 58/2009)"}
+
+
 # A pagina do deputado agora e do Next.js, em web/. Aqui fica so a API e o
 # painel: dois renderizadores do mesmo HTML divergem com o tempo.
 from .admin import router as _admin  # noqa: E402  (evita import circular)
