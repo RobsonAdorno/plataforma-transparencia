@@ -1,2 +1,2 @@
-ibge_municipio;tipo;numero;ano;ementa;data_apresentacao;autor_cpf;situacao;fonte_url
-2910800;PROJETO DE LEI;142;2026;Dispoe sobre a arborizacao de novas vias publicas no municipio;2026-08-19;12345678909;EM TRAMITACAO;https://www.exemplo.ba.leg.br/documentos/pl-142-2026
+ibge_municipio;identificador;tipo;numero;ano;ementa;data_apresentacao;situacao_texto;tema;url_integra;fonte_url
+2910800;PL-2026-17;PL;17;2026;Institui o programa municipal de hortas comunitarias.;2026-03-12;Aprovado em primeira discussao;meio ambiente;https://camara.exemplo.gov.br/pl/17-2026.pdf;https://camara.exemplo.gov.br/proposicoes

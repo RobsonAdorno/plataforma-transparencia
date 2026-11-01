@@ -20,10 +20,13 @@ Pipeline completo, carregando em PostgreSQL:
 | Alertas | 78 rascunhos a partir de 10 meses — cerca de 2 por semana |
 | Entes | 1 união, 27 estados, 5.571 municípios |
 | Eleitos municipais | 58.174 vereadores e 5.568 prefeitos (TSE 2024) |
-| Tramitação | 4.446 etapas em 198 proposições; 2.020 viraram marco, 2.426 eram ruído |
-| Leis concluídas | 3 projetos rastreados do protocolo ao Diário Oficial |
+| Tramitação | 19.694 etapas em 1.124 proposições; 8.162 viraram marco, 11.532 eram ruído |
+| Leis concluídas | 88 rastreadas do protocolo ao Diário Oficial (30 leis, 55 decretos legislativos, 2 emendas, 1 lei complementar) |
+| Autoria e relatoria | 2.607 registros; 1.305 relatores extraídos do despacho |
+| Cobertura declarada | 11.142 pares município×cargo: 11.103 publicados, 35 não publicados, 4 não se aplicam |
 | População | Censo 2022 e estimativa 2021 nos 5.571 municípios e 27 estados |
 | Conteúdo educativo | 78 atribuições de cargo, todas com artigo citado |
+| Reconhecimento de etapa | 95,3% por código, 4,7% por regra de texto (a parte frágil) |
 
 **513 de 513 deputados ligados ao TSE**, sendo 511 por CPF e 2 por nome dentro
 da mesma UF. Fila de revisão vazia.
@@ -303,6 +306,41 @@ arquivo do TSE lista 10 vereadores eleitos — 9 por quociente e 1 por média �
 cidade de 3.268 habitantes. Dez é par, e nenhuma das 24 faixas do art. 29 é par.
 A divergência está na fonte, e isso vai para conferência manual, não para a tela
 como acusação.
+
+## Cobertura declarada: a diferença entre "não tem" e "não publicaram"
+
+Antes da tabela `cobertura`, município sem vereador no banco era
+indistinguível de município cujo resultado o TSE não divulgou. São 23 casos e
+três causas:
+
+- **Brasília** não tem vereador nem prefeito por lei — o DF é regido por
+  deputados distritais e um governador (CF/88, art. 32).
+- **Fernando de Noronha** é distrito estadual de Pernambuco, não município com
+  câmara própria.
+- **Os outros 21** são lacuna da fonte. Em Ananindeua (PA), 478 mil
+  habitantes, o TSE registra 401 candidaturas a vereador e divulga o resultado
+  de nenhuma. Em Iporá (GO) nem o prefeito saiu: 165 candidaturas, todas
+  `#NULO`.
+
+A classificação não é deduzida da ausência: é contada no arquivo do TSE, por
+município e cargo, e a página da cidade mostra o número do lado. Dizer "nenhum
+vereador" para Ananindeua sem explicar seria publicar uma afirmação falsa com
+cara de dado oficial.
+
+## Importação manual
+
+Sete entidades em `templates/*.csv`, geradas a partir das próprias Specs
+(`plataforma.cli templates`) para não divergirem do código.
+
+As três do nível municipal — `gabinete`, `despesa`, `proposicao` — aceitam
+`cpf` **ou** `nome_urna` para apontar o mandato. Isso não é conveniência: o TSE
+publica `-4` no CPF de candidato municipal, então os 58.174 vereadores do banco
+estão com `cpf_hash` nulo e uma chave só por CPF não acharia nenhum. Quando o
+nome é ambíguo dentro da cidade, a importação para e diz, em vez de escolher um.
+
+A simulação (sem `--confirmar`) executa os upserts de verdade e desfaz com
+`rollback`. Conferir só o formato das colunas não provava nada — o erro caro é
+referencial, e ele só aparece quando o `insert` roda.
 
 ## Próximo passo
 

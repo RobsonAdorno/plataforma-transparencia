@@ -180,6 +180,12 @@ def cmd_importar(args):
         print("\n  simulação apenas. Repita com --confirmar para gravar.")
 
 
+def cmd_templates(args):
+    from . import importador
+    for caminho in importador.gera_templates(args.destino):
+        print(" ", caminho)
+
+
 def cmd_reverter(args):
     from . import importador
     print(json.dumps(importador.reverte(args.lote, args.ator), ensure_ascii=False, indent=1))
@@ -215,6 +221,9 @@ def main(argv=None):
     im.add_argument("--entidade", required=True); im.add_argument("--arquivo", required=True)
     im.add_argument("--ator", default="cli"); im.add_argument("--confirmar", action="store_true")
     im.set_defaults(func=cmd_importar)
+    tp = sub.add_parser("templates", help="regera os CSV de exemplo a partir das Specs")
+    tp.add_argument("--destino", default="templates")
+    tp.set_defaults(func=cmd_templates)
     rv = sub.add_parser("reverter")
     rv.add_argument("--lote", required=True); rv.add_argument("--ator", default="cli")
     rv.set_defaults(func=cmd_reverter)

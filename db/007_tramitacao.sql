@@ -67,8 +67,10 @@ create table if not exists etapa (
   -- regra sobre o despacho e e o que quebra em silencio se a Camara mudar a
   -- redacao. Guardar isso e o que permite medir a fragilidade depois.
   metodo         text check (metodo in ('codigo','texto')),
-  fonte_registro_id bigint references fonte_registro(id),
-  unique (proposicao_id, fonte, sequencia, cod_tipo, data_hora)
+  fonte_registro_id bigint references fonte_registro(id)
+  -- Sem chave unica de proposito: ver db/011. A Camara publica movimentacoes
+  -- distintas empatadas em sequencia, codigo e horario, e a idempotencia aqui
+  -- vem do delete-e-reinsere por (proposicao, fonte), nao de um indice.
 );
 create index if not exists ix_etapa_proposicao on etapa (proposicao_id, data_hora);
 create index if not exists ix_etapa_marco on etapa (marco, data_hora desc) where marco is not null;

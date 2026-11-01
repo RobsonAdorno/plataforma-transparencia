@@ -51,6 +51,23 @@ class Spec:
 
 
 # ------------------------------------------------------------------ validacao
+#
+# Um parser so, usado pela validacao e pela gravacao. Quando eram dois, o
+# validador recusava "1.250,00" e o gravador aceitava: a planilha era barrada
+# por um valor que o banco teria guardado certo.
+
+def _numero(v: str | None) -> float | None:
+    """Aceita '1.234,56', '1234.56' e 'R$ 1.234,56'. Devolve None se nao for numero."""
+    if v is None or not str(v).strip():
+        return None
+    s = str(v).strip().replace("R$", "").replace(" ", "").replace("\u00a0", "")
+    if "," in s:                      # formato brasileiro: ponto e milhar
+        s = s.replace(".", "").replace(",", ".")
+    try:
+        return float(s)
+    except ValueError:
+        return None
+
 
 def _valida_linha(spec: Spec, linha: dict, n: int, entes: set[str]) -> list[str]:
     erros = []
@@ -71,9 +88,7 @@ def _valida_linha(spec: Spec, linha: dict, n: int, entes: set[str]) -> list[str]
             except ValueError:
                 erros.append(f"linha {n}: data '{v}' não está em AAAA-MM-DD")
         elif c.tipo == "numero":
-            try:
-                float(v.replace(",", "."))
-            except ValueError:
+            if _numero(v) is None:
                 erros.append(f"linha {n}: '{c.nome}' = '{v}' não é número")
         elif c.tipo == "enum" and c.valores and v.upper() not in c.valores \
                 and v not in c.valores:
@@ -147,6 +162,121 @@ def _up_mandato(cur, linha, fonte_id):
          linha.get("situacao") or "em_exercicio", fonte_id))
 
 
+# ---------------------------------------------- identificar o mandato alvo
+#
+# Aqui mora o problema mais chato do nivel municipal. O importador de mandato
+# acha a pessoa pelo CPF, porque para deputado federal o CPF existe. Para
+# vereador NAO existe: o TSE publica '-4' ("nao divulgavel") no CPF de
+# candidato municipal, e por isso os 58.174 vereadores do banco estao com
+# cpf_hash nulo. Uma planilha de despesa de camara municipal chegaria sem como
+# apontar para o eleito.
+#
+# Entao a chave alternativa e (nome de urna + municipio + cargo), que dentro de
+# uma cidade e praticamente unica. Quando for ambigua - dois homonimos na mesma
+# camara - a importacao para e diz, em vez de escolher um e gravar errado.
+
+def _resolve_mandato(cur, linha) -> int:
+    cpf = normaliza_cpf(linha.get("cpf"))
+    if cpf and cpf_valido(cpf):
+        cur.execute("""select m.id from mandato m
+                         join pessoa p on p.id = m.pessoa_id
+                        where p.cpf_hash = %s and m.cargo = %s
+                          and m.ente_codigo = %s""",
+                    (hash_cpf(cpf), (linha.get("cargo") or "").upper(),
+                     linha.get("ibge_municipio")))
+        achados = [r[0] for r in cur.fetchall()]
+        if achados:
+            return achados[0]
+
+    nome = (linha.get("nome_urna") or "").strip()
+    if not nome:
+        raise ValueError("sem CPF válido no banco e sem nome_urna: "
+                         "não há como identificar o mandato")
+    cur.execute("""select m.id, p.nome_completo from mandato m
+                     join pessoa p on p.id = m.pessoa_id
+                    where m.ente_codigo = %s and m.cargo = %s
+                      and (upper(p.nome_urna) = upper(%s)
+                           or upper(p.nome_completo) = upper(%s))""",
+                (linha.get("ibge_municipio"), (linha.get("cargo") or "").upper(),
+                 nome, nome))
+    achados = cur.fetchall()
+    if not achados:
+        raise ValueError(f"'{nome}' não é {linha.get('cargo')} em "
+                         f"{linha.get('ibge_municipio')} — confira o nome de urna")
+    if len(achados) > 1:
+        nomes = ", ".join(a[1] for a in achados)
+        raise ValueError(f"'{nome}' é ambíguo em {linha.get('ibge_municipio')}: "
+                         f"{nomes}. Use a coluna cpf para desempatar")
+    return achados[0][0]
+
+
+def _up_gabinete(cur, linha, fonte_id):
+    mid = _resolve_mandato(cur, linha)
+    # Sem chave natural na tabela: o par (mandato, assessor, mes) e o que
+    # identifica a folha. Apagar e reinserir o mes evita somar duas vezes a
+    # mesma planilha, que e o erro mais provavel de quem importa a mao.
+    cur.execute("""delete from cargo_gabinete
+                    where mandato_id=%s and upper(nome_assessor)=upper(%s)
+                      and mes_referencia=%s""",
+                (mid, linha["nome_assessor"], linha.get("mes_referencia") or None))
+    cur.execute("""
+        insert into cargo_gabinete (mandato_id, nome_assessor, cargo, vinculo,
+                                    remuneracao_bruta, mes_referencia, fonte_registro_id)
+        values (%s,%s,%s,%s,%s,%s,%s)""",
+        (mid, linha["nome_assessor"], linha.get("cargo_assessor") or None,
+         linha.get("vinculo") or None, _dinheiro(linha.get("remuneracao_bruta")),
+         linha.get("mes_referencia") or None, fonte_id))
+
+
+def _up_despesa(cur, linha, fonte_id):
+    mid = _resolve_mandato(cur, linha)
+    cur.execute("""
+        insert into despesa (mandato_id, data, categoria, descricao, fornecedor,
+                             cnpj_cpf, valor, documento_url, id_externo,
+                             fonte_registro_id)
+        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        on conflict (id_externo) do nothing""",
+        (mid, linha.get("data") or None, linha.get("categoria") or None,
+         linha.get("descricao") or None, linha.get("fornecedor") or None,
+         linha.get("cnpj_cpf") or None, _dinheiro(linha.get("valor")),
+         linha.get("documento_url") or None,
+         linha.get("id_documento") or None, fonte_id))
+
+
+def _up_proposicao(cur, linha, fonte_id):
+    """Projeto de lei municipal, que nenhuma API entrega.
+
+    ente_codigo e o municipio, nao '0': a mesma tabela guarda PL federal e
+    projeto de camara municipal. Era esse o ponto do modelo canonico - o que
+    muda e o ente, nunca a estrutura.
+    """
+    cur.execute("""
+        insert into proposicao (ente_codigo, id_externo, tipo, numero, ano, ementa,
+                                data_apresentacao, situacao, tema, url_integra,
+                                fonte_registro_id)
+        values (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+        on conflict (ente_codigo, id_externo) do update set
+          ementa = excluded.ementa, situacao = excluded.situacao,
+          tema = excluded.tema, url_integra = excluded.url_integra,
+          fonte_registro_id = excluded.fonte_registro_id""",
+        (linha["ibge_municipio"], linha["identificador"], linha.get("tipo") or None,
+         _inteiro(linha.get("numero")), _inteiro(linha.get("ano")),
+         linha.get("ementa") or None, linha.get("data_apresentacao") or None,
+         linha.get("situacao_texto") or None, linha.get("tema") or None,
+         linha.get("url_integra") or None, fonte_id))
+
+
+def _dinheiro(v: str | None) -> float:
+    return _numero(v) or 0.0
+
+
+def _inteiro(v: str | None) -> int | None:
+    try:
+        return int(str(v).strip())
+    except (ValueError, AttributeError):
+        return None
+
+
 ESPECS: dict[str, Spec] = {
     "competencia": Spec(
         "competencia", "competencia",
@@ -175,6 +305,39 @@ ESPECS: dict[str, Spec] = {
          Campo("data_inicio", False, "data"), Campo("data_fim", False, "data"),
          Campo("situacao", False, "enum", SITUACOES), Campo("fonte_url", True)],
         ("cpf", "cargo", "ibge_municipio"), _up_mandato, ""),
+    # As tres abaixo cobrem o nivel municipal, onde nao existe API. Todas
+    # aceitam cpf OU nome_urna para apontar o mandato, porque o TSE nao
+    # divulga o CPF de candidato municipal.
+    "gabinete": Spec(
+        "gabinete", "cargo_gabinete",
+        [Campo("cpf", False, "cpf"), Campo("nome_urna"),
+         Campo("cargo", True, "enum", CARGOS),
+         Campo("ibge_municipio", True, "ibge"),
+         Campo("nome_assessor", True), Campo("cargo_assessor"), Campo("vinculo"),
+         Campo("remuneracao_bruta", False, "numero"),
+         Campo("mes_referencia", False, "data"), Campo("fonte_url", True)],
+        ("ibge_municipio", "nome_urna", "nome_assessor", "mes_referencia"),
+        _up_gabinete, ""),
+    "despesa": Spec(
+        "despesa", "despesa",
+        [Campo("cpf", False, "cpf"), Campo("nome_urna"),
+         Campo("cargo", True, "enum", CARGOS),
+         Campo("ibge_municipio", True, "ibge"),
+         Campo("id_documento", True), Campo("data", False, "data"),
+         Campo("categoria"), Campo("descricao"), Campo("fornecedor"),
+         Campo("cnpj_cpf"), Campo("valor", True, "numero"),
+         Campo("documento_url"), Campo("fonte_url", True)],
+        ("id_documento",), _up_despesa,
+        "select id_externo from despesa where id_externo is not null"),
+    "proposicao": Spec(
+        "proposicao", "proposicao",
+        [Campo("ibge_municipio", True, "ibge"), Campo("identificador", True),
+         Campo("tipo"), Campo("numero", False, "numero"), Campo("ano", False, "numero"),
+         Campo("ementa", True), Campo("data_apresentacao", False, "data"),
+         Campo("situacao_texto"), Campo("tema"), Campo("url_integra"),
+         Campo("fonte_url", True)],
+        ("ibge_municipio", "identificador"), _up_proposicao,
+        "select ente_codigo||'|'||id_externo from proposicao where id_externo is not null"),
 }
 
 
@@ -242,8 +405,31 @@ def processa(entidade: str, caminho: str, ator: str, *, confirmar: bool = False)
             else:
                 rel.novos += 1
 
-        if rel.erros or not confirmar:
-            return rel        # simulacao: nada e gravado
+        if rel.erros:
+            return rel
+
+        if not confirmar:
+            # Simulacao de verdade: executa os upserts e desfaz. Conferir so o
+            # formato das colunas nao prova nada - o erro caro e referencial
+            # ("esse nome nao e vereador nessa cidade"), e ele so aparece
+            # quando o insert roda. Antes disso a simulacao dizia "3 novos" e
+            # a gravacao estourava na terceira linha.
+            cur.execute("""insert into fonte_registro (fonte, tipo, url_origem,
+                             inserido_por, observacao)
+                           values (%s,'manual',%s,%s,'simulação') returning id""",
+                        (f"import_{entidade}",
+                         (linhas[0].get("fonte_url") if linhas else None), ator))
+            ensaio = cur.fetchone()[0]
+            for i, linha in enumerate(linhas, start=2):
+                try:
+                    cur.execute("savepoint ensaio")
+                    spec.upsert(cur, linha, ensaio)
+                    cur.execute("release savepoint ensaio")
+                except Exception as e:
+                    cur.execute("rollback to savepoint ensaio")
+                    rel.erros.append(f"linha {i}: {e}")
+            con.rollback()
+            return rel
 
         lote = str(uuid.uuid4())
         rel.lote_id = lote
@@ -267,6 +453,46 @@ def processa(entidade: str, caminho: str, ator: str, *, confirmar: bool = False)
         con.commit()
         rel.aplicado = True
     return rel
+
+
+EXEMPLOS = {
+    "gabinete": ["", "JOAO DA SILVA", "VEREADOR", "2910800", "Maria Souza",
+                 "Assessor Parlamentar I", "comissionado", "3500,00",
+                 "2026-09-01", "https://camara.exemplo.gov.br/folha/2026-09.pdf"],
+    "despesa": ["", "JOAO DA SILVA", "VEREADOR", "2910800", "NF-2026-0042",
+                "2026-09-15", "Combustivel", "Abastecimento do veiculo oficial",
+                "Posto Central Ltda", "12345678000199", "412,90",
+                "https://camara.exemplo.gov.br/notas/42.pdf",
+                "https://camara.exemplo.gov.br/transparencia"],
+    "proposicao": ["2910800", "PL-2026-17", "PL", "17", "2026",
+                   "Institui o programa municipal de hortas comunitarias.",
+                   "2026-03-12", "Aprovado em primeira discussao", "meio ambiente",
+                   "https://camara.exemplo.gov.br/pl/17-2026.pdf",
+                   "https://camara.exemplo.gov.br/proposicoes"],
+}
+
+
+def gera_templates(destino: str = "templates") -> list[str]:
+    """Escreve um CSV de exemplo por entidade, a partir das proprias Specs.
+
+    Template escrito a mao desencontra do codigo na primeira mudanca de campo,
+    e quem descobre e a pessoa que passou a tarde preenchendo a planilha.
+    """
+    import csv as _csv
+    from pathlib import Path as _Path
+
+    pasta = _Path(destino)
+    pasta.mkdir(parents=True, exist_ok=True)
+    escritos = []
+    for nome, spec in ESPECS.items():
+        alvo = pasta / f"{nome}.csv"
+        with alvo.open("w", newline="", encoding="utf-8") as f:
+            w = _csv.writer(f, delimiter=";")
+            w.writerow(spec.nomes)
+            if exemplo := EXEMPLOS.get(nome):
+                w.writerow(exemplo)
+        escritos.append(str(alvo))
+    return escritos
 
 
 def reverte(lote_id: str, ator: str) -> dict:

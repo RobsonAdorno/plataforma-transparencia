@@ -72,6 +72,71 @@ def ufs():
         return cur.fetchall()
 
 
+@app.get("/municipios")
+def municipios(uf: str = Query(..., min_length=2, max_length=2)):
+    """Lista enxuta para navegar do estado ate a cidade."""
+    with cursor() as cur:
+        cur.execute("""
+            select e.codigo_ibge, e.nome, e.populacao,
+                   count(*) filter (where m.cargo='VEREADOR') as vereadores,
+                   count(*) filter (where m.cargo='PREFEITO')  as prefeitos
+              from ente e
+              left join mandato m on m.ente_codigo = e.codigo_ibge
+             where e.nivel='municipio' and e.uf = upper(%s)
+             group by 1,2,3
+             order by e.populacao desc nulls last, e.nome""", (uf,))
+        return cur.fetchall()
+
+
+@app.get("/municipio/{codigo_ibge}")
+def municipio(codigo_ibge: str):
+    """A cidade da pessoa: quem governa, quem legisla, e o que a fonte nao disse."""
+    with cursor() as cur:
+        cur.execute("""
+            select e.codigo_ibge, e.nome, e.uf, e.populacao, e.populacao_ano,
+                   e.populacao_referencia, e.populacao_referencia_ano,
+                   eu.nome as estado
+              from ente e
+              left join ente eu on eu.nivel='estado' and eu.uf = e.uf
+             where e.codigo_ibge = %s and e.nivel='municipio'""", (codigo_ibge,))
+        base = cur.fetchone()
+        if base is None:
+            raise HTTPException(404, "município não encontrado")
+
+        cur.execute("""
+            select p.id, p.nome_urna, p.nome_completo, m.cargo, m.partido, m.situacao
+              from mandato m join pessoa p on p.id = m.pessoa_id
+             where m.ente_codigo = %s and m.cargo in ('PREFEITO','VEREADOR')
+             order by m.cargo, p.nome_urna""", (codigo_ibge,))
+        eleitos = cur.fetchall()
+        base["prefeito"] = next((e for e in eleitos if e["cargo"] == "PREFEITO"), None)
+        base["vereadores"] = [e for e in eleitos if e["cargo"] == "VEREADOR"]
+
+        # A cobertura e o que impede a tela de afirmar "nenhum vereador" quando
+        # o que houve foi a fonte nao publicar.
+        cur.execute("""select cargo, situacao, eleitos, candidaturas, sem_resultado,
+                              motivo, fonte, ano_eleicao
+                         from cobertura where ente_codigo = %s
+                        order by cargo""", (codigo_ibge,))
+        base["cobertura"] = {c["cargo"]: c for c in cur.fetchall()}
+
+        # Teto de cadeiras do art. 29, IV para esta cidade, pelas duas
+        # referencias de populacao.
+        cur.execute("""
+            select f.letra, f.max_vereadores, f.pop_min, f.pop_max
+              from faixa_vereador f
+             where %s::bigint >= f.pop_min and (f.pop_max is null or %s::bigint <= f.pop_max)""",
+                    (base["populacao"], base["populacao"]))
+        base["faixa_censo"] = cur.fetchone()
+        cur.execute("""
+            select f.letra, f.max_vereadores
+              from faixa_vereador f
+             where %s::bigint >= f.pop_min and (f.pop_max is null or %s::bigint <= f.pop_max)""",
+                    (base["populacao_referencia"], base["populacao_referencia"]))
+        base["faixa_referencia"] = cur.fetchone()
+        return base
+
+
 @app.get("/deputados")
 def deputados(uf: str | None = Query(None, min_length=2, max_length=2),
               partido: str | None = None):

@@ -72,6 +72,16 @@ def _unicos(man: bronze.Manifest) -> Iterator[dict]:
     return iter(melhor.values())
 
 
+def linhas(man: bronze.Manifest) -> Iterator[dict]:
+    """Todas as candidaturas, uma por candidato. Inclui quem nao foi eleito.
+
+    eleitos() filtra; esta nao. Quem mede COBERTURA precisa justamente das
+    linhas descartadas: um municipio com 401 candidaturas a vereador e nenhum
+    resultado divulgado so pode ser detectado contando o que nao virou eleito.
+    """
+    return _unicos(man)
+
+
 def eleitos(man: bronze.Manifest, cargos: set[str] | None = None) -> list[dict]:
     """So quem foi eleito, uma linha por pessoa."""
     saida: list[dict] = []

@@ -150,3 +150,32 @@ export const dataHoraBr = (iso: string | null | undefined) =>
   iso ? new Date(iso).toLocaleString("pt-BR",
     { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" })
     : "—";
+
+// ------------------------------------------------------------- municipios
+
+export type Cobertura = {
+  cargo: string; situacao: "publicado" | "nao_publicado" | "nao_se_aplica";
+  eleitos: number; candidaturas: number; sem_resultado: number;
+  motivo: string | null; fonte: string; ano_eleicao: number;
+};
+export type Eleito = {
+  id: number; nome_urna: string; nome_completo: string;
+  cargo: string; partido: string | null; situacao: string;
+};
+export type Faixa = { letra: string; max_vereadores: number } | null;
+export type Municipio = {
+  codigo_ibge: string; nome: string; uf: string; estado: string | null;
+  populacao: number | null; populacao_ano: number | null;
+  populacao_referencia: number | null; populacao_referencia_ano: number | null;
+  prefeito: Eleito | null; vereadores: Eleito[];
+  cobertura: Record<string, Cobertura>;
+  faixa_censo: Faixa; faixa_referencia: Faixa;
+};
+export type MunicipioLinha = {
+  codigo_ibge: string; nome: string; populacao: number | null;
+  vereadores: number; prefeitos: number;
+};
+
+export const listarMunicipios = (uf: string) =>
+  buscar<MunicipioLinha[]>(`/municipios?uf=${uf}`);
+export const verMunicipio = (ibge: string) => buscar<Municipio>(`/municipio/${ibge}`);

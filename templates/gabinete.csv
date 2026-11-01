@@ -1,2 +1,2 @@
-mandato_cpf;ibge_municipio;nome_assessor;cpf_assessor;cargo;vinculo;remuneracao_bruta;mes_referencia;fonte_url
-12345678909;2910800;Joao Pereira Lima;98765432100;ASSESSOR PARLAMENTAR II;COMISSIONADO;4250.00;2026-09;https://www.exemplo.ba.leg.br/folha/2026-09.pdf
+cpf;nome_urna;cargo;ibge_municipio;nome_assessor;cargo_assessor;vinculo;remuneracao_bruta;mes_referencia;fonte_url
+;JOAO DA SILVA;VEREADOR;2910800;Maria Souza;Assessor Parlamentar I;comissionado;3500,00;2026-09-01;https://camara.exemplo.gov.br/folha/2026-09.pdf

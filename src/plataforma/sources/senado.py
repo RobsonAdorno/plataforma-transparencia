@@ -81,6 +81,12 @@ def norma_de(det: dict) -> tuple[str, str, int, str | None] | None:
         return None
     ano = n.get("anoAssinatura") or (n.get("dataAssinatura") or "")[:4]
     sigla = (n.get("siglaTipo") or "LEI").upper().strip()
+    # O Senado sufixa o tipo com '-N' (numerada): LEI-N, EMC-N. Sem tirar o
+    # sufixo antes de traduzir, duas emendas constitucionais entraram no banco
+    # como 'EMC_N' enquanto as leis entravam certo - porque 'LEI-N' estava no
+    # mapa e 'EMC-N' nao.
+    if sigla.endswith("-N"):
+        sigla = sigla[:-2]
     return (
         TIPO_NORMA.get(sigla, sigla.replace(" ", "_").replace("-", "_")),
         str(n["numero"]).replace(".", ""),
