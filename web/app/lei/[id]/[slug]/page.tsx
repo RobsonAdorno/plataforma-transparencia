@@ -136,9 +136,13 @@ export default async function PaginaLei({ params }: Props) {
       {/* ------------------------------------------------------- a trilha */}
       <h2 style={{ marginTop: 36 }}>O caminho para virar lei</h2>
       <p className="muted" style={{ fontSize: 13.5, margin: "8px 0 20px", maxWidth: "64ch" }}>
-        São sete etapas. As marcadas em cor já aconteceram; as de contorno
-        tracejado ainda não. Cada bloco pode abrir e mostrar os despachos
-        oficiais que o compõem.
+        {p.esfera === "FEDERAL"
+          ? "São sete etapas, porque no Congresso o texto passa por duas casas."
+          : `São ${p.caminho.length} etapas: ${
+              p.esfera === "ESTADUAL" ? "a assembleia" : "a câmara"
+            } é unicameral, então não há casa revisora.`}{" "}
+        As marcadas em cor já aconteceram; as de contorno tracejado ainda não.
+        Cada bloco pode abrir e mostrar os despachos oficiais que o compõem.
       </p>
 
       <ol className="trilha">

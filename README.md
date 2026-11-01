@@ -27,6 +27,7 @@ Pipeline completo, carregando em PostgreSQL:
 | População | Censo 2022 e estimativa 2021 nos 5.571 municípios e 27 estados |
 | Conteúdo educativo | 78 atribuições de cargo, todas com artigo citado |
 | Reconhecimento de etapa | 95,3% por código, 4,7% por regra de texto (a parte frágil) |
+| Fontes levantadas | federal testado; 4 de 27 estados levantados; 510 municípios com diário indexado |
 
 **513 de 513 deputados ligados ao TSE**, sendo 511 por CPF e 2 por nome dentro
 da mesma UF. Fila de revisão vazia.
@@ -342,11 +343,72 @@ A simulação (sem `--confirmar`) executa os upserts de verdade e desfaz com
 `rollback`. Conferir só o formato das colunas não provava nada — o erro caro é
 referencial, e ele só aparece quando o `insert` roda.
 
+## Leis estaduais e municipais
+
+A API da Câmara cobre o federal. Acima disso o Brasil não tem padrão, e a
+tabela `fonte_legislativa` registra o levantamento com o grau de verificação
+explícito — `testado` é "chamei e veio dado", `documentado` é "a casa publica a
+documentação e eu não obtive resposta". Tratar os dois como iguais faria o
+roadmap mentir sobre o que está pronto.
+
+**Estadual — uma assembleia por vez.** Não existe API única nem agregador
+oficial. Verificado em 01/11/2026:
+
+| Casa | Fonte | Tramitação | Verificação |
+|---|---|---|---|
+| Minas Gerais | API REST v2 | sim | testado — 1.675 PLs de 2025 com autor e ementa |
+| São Paulo | XML em massa, 17 MB, diário | **não** | testado — proposituras desde 1996, sem tramitação nem desfecho |
+| Paraná | API com `tramites` e `norma-legal` | sim | documentado — o host não respondeu |
+| Pernambuco | portal HTML | não | documentado — responde, conteúdo não conferido |
+| outras 23 | — | — | não levantado |
+
+A Transparência Internacional avaliou as 27 casas estaduais: só quatro ficaram
+em nível "bom" (DF, ES, MG e CE), nenhuma chegou a "ótimo", e dados abertos
+está entre os pontos mais fracos.
+
+**Municipal — o buraco de verdade.** 5.571 câmaras, sem padrão, sem API, sem
+CSV. O LexML federa apenas 57 câmaras. O único caminho em escala é o diário
+oficial: o Querido Diário indexa **510 dos 5.570 municípios (9,2%)**, com busca
+em texto completo e sem autenticação.
+
+Mas diário oficial é *texto*, não registro de leis. Uma busca por "lei" em
+Salvador devolve 4.823 edições e a lei aparece citada dentro de um despacho
+tributário. Virar "quais leis esta cidade aprovou" exige extração, e extração
+erra. Por isso o municipal entra pela importação manual revisada, cidade por
+cidade — que é o que as entidades `proposicao` e `despesa` do importador fazem.
+
+### O caminho não tem sete etapas em toda esfera
+
+Levantar isso expôs um defeito: o modelo de fases era federal e único. Só o
+Congresso tem duas casas. Assembleia legislativa e câmara municipal são
+unicamerais, então o projeto vai do plenário direto à sanção:
+
+```
+FEDERAL    7 etapas  apresentado → comissões → plenário → casa revisora
+                     → plenário revisor → sanção presidencial → lei
+ESTADUAL   5 etapas  apresentado → comissões → plenário
+                     → sanção do Governador → lei
+MUNICIPAL  5 etapas  apresentado → comissões → plenário
+                     → sanção do Prefeito → lei
+```
+
+Com um caminho único, uma lei estadual mostraria dois degraus que nunca
+preenchem e a pessoa leria "faltam quatro etapas" onde faltam duas. Agora
+`CAMINHOS` é indexado por esfera, `esfera_de()` deduz do código do IBGE, e o
+rótulo da sanção acompanha — dizer "sanção presidencial" numa lei de câmara
+municipal seria ensinar errado no lugar onde o projeto quer ensinar.
+
+A página `/cobertura` publica tudo isso, porque ausência de dado pode ser lida
+como afirmação: "nenhuma lei do seu estado" tem que significar "ainda não
+coletamos", nunca "a assembleia não legislou".
+
 ## Próximo passo
 
-Verificação real do Firebase (depende das credenciais do projeto), as três
-entidades que faltam no importador, páginas de município e a cobertura declarada
-por município — hoje a ausência de vereador é indistinguível de "não publicado",
-e são 23 casos. Falta também ampliar a janela de tramitação: há quatro dias
-carregados, e o acervo histórico só se constrói coletando todo dia, porque
-tramitação passada não se reconstrói depois.
+Verificação real do Firebase (depende das credenciais do projeto) e o primeiro
+conector estadual. Minas Gerais é o melhor candidato: API testada, com
+tramitação, e a `fonte_legislativa` já diz onde está.
+
+Depois, por ordem de retorno: ampliar a janela federal de tramitação para 2027
+em diante (o acervo histórico só se constrói coletando todo dia), o conector de
+São Paulo em massa, e o piloto de extração de gazeta em uma cidade coberta pelo
+Querido Diário — com timebox, porque extração de PDF é poço sem fundo.

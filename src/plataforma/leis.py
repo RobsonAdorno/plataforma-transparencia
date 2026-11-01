@@ -146,7 +146,7 @@ def _grava_etapas(cur, prop_id: int, fonte: str, etapas: list[dict],
              e.get("marco"), e.get("fase"), e.get("metodo"), fonte_id))
 
 
-def _etapa_apresentacao(d: dict) -> dict | None:
+def _etapa_apresentacao(d: dict, esfera: str = "FEDERAL") -> dict | None:
     """A apresentacao vem da propria proposicao, nao do historico.
 
     Os codigos candidatos no historico (100, 105, 604) disparam tambem para
@@ -162,7 +162,7 @@ def _etapa_apresentacao(d: dict) -> dict | None:
             "codTipoTramitacao": "APRESENTACAO",
             "descricaoTramitacao": "Apresentação da proposição",
             "despacho": None, "url": d.get("urlInteiroTeor"),
-            "marco": "APRESENTACAO", "fase": T.FASES["APRESENTACAO"],
+            "marco": "APRESENTACAO", "fase": T.fase_de("APRESENTACAO", esfera),
             "metodo": "codigo"}
 
 
@@ -274,8 +274,12 @@ def carrega(cur, fonte_id: int, inicio: str, fim: str,
     classificadas: dict[str, list[dict]] = {}
     alem_da_origem: list[str] = []
     for pid, tr in trilhas.items():
-        et = T.trilha(tr)
-        if ap := _etapa_apresentacao(detalhes.get(pid) or {}):
+        # Hoje tudo que entra por aqui e federal (ente '0'), mas a esfera e
+        # explicita de proposito: quando entrar lei estadual ou municipal, o
+        # caminho muda de sete etapas para cinco e a fase tem que acompanhar.
+        esfera = T.esfera_de((detalhes.get(pid) or {}).get("ente_codigo") or "0")
+        et = T.trilha(tr, esfera)
+        if ap := _etapa_apresentacao(detalhes.get(pid) or {}, esfera):
             et.insert(0, ap)
         classificadas[pid] = et
         marcos = {e.get("marco") for e in et}
@@ -309,7 +313,7 @@ def carrega(cur, fonte_id: int, inicio: str, fim: str,
             sen_et = []
             for e in senado.trilha(sen):
                 m = mapa.get(e["codTipoTramitacao"])
-                sen_et.append({**e, "marco": m, "fase": T.FASES.get(m or ""),
+                sen_et.append({**e, "marco": m, "fase": T.fase_de(m, esfera),
                                "metodo": "codigo"})
             _grava_etapas(cur, prop_id, "senado", sen_et, fonte_id)
             n_etapa += len(sen_et)

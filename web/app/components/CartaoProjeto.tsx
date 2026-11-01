@@ -15,11 +15,11 @@ export const ROTULO: Record<string, string> = {
 };
 
 export default function CartaoProjeto({
-  id, tipo, numero, ano, ementa, marco, fase, extra,
+  id, tipo, numero, ano, ementa, marco, fase, etapas = 7, extra,
 }: {
   id: number; tipo: string; numero: number; ano: number;
   ementa: string | null; marco: Marco | null; fase: number | null;
-  extra?: React.ReactNode;
+  etapas?: number; extra?: React.ReactNode;
 }) {
   const morto = marco ? MORTOS.includes(marco) : false;
   return (
@@ -33,7 +33,7 @@ export default function CartaoProjeto({
           </span>
         )}
       </div>
-      <Caminho fase={fase} morto={morto} />
+      <Caminho fase={fase} total={etapas} morto={morto} />
       <h3>{ementa?.split(/(?<=\.)\s/)[0]?.slice(0, 110) ?? "Sem ementa publicada"}</h3>
       {ementa && ementa.length > 110 && <p>{ementa}</p>}
       {extra}

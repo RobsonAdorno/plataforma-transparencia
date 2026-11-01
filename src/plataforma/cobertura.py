@@ -141,3 +141,57 @@ def principal(ano: int = 2024) -> dict:
                 print(f"  {nome}/{uf:<3} {cargo:<9} {cand:>4} candidaturas, "
                       f"{sem:>4} sem resultado")
     return r
+
+
+# ------------------------------------------------- gazeta oficial municipal
+
+QD_CIDADES = "https://api.queridodiario.org.br/cities"
+QD_GAZETAS = "https://api.queridodiario.org.br/gazettes"
+
+
+def carrega_gazetas(cur) -> dict:
+    """Marca quais municipios tem diario oficial indexado pelo Querido Diario.
+
+    E o unico caminho em escala para lei municipal, e cobre pouco: dos 5.570
+    municipios, 510 tem diario realmente disponivel. Os outros aparecem na
+    listagem da API com `availability_date` vazio, o que significa "existe o
+    raspador ou nem isso", nao "esta coberto" - confundir os dois inflaria a
+    cobertura por um fator de dez.
+
+    Importante sobre a natureza do dado: a gazeta e TEXTO, nao registro de lei.
+    A busca devolve a lei citada dentro de um ato administrativo qualquer. Para
+    virar "quais leis esta cidade aprovou" ainda falta extracao, e e por isso
+    que esta funcao grava escopo='gazeta' e nunca escopo='norma'.
+    """
+    import requests
+
+    r = requests.get(QD_CIDADES, timeout=180)
+    r.raise_for_status()
+    corpo = r.json()
+    cidades = corpo.get("cities") if isinstance(corpo, dict) else corpo
+
+    cobertos = {c["territory_id"]: c["availability_date"]
+                for c in cidades
+                if (c.get("availability_date") or "").strip()}
+
+    cur.execute("select codigo_ibge from ente where nivel='municipio'")
+    nossos = {r[0] for r in cur.fetchall()}
+
+    n = 0
+    for codigo, desde in cobertos.items():
+        if codigo not in nossos:
+            continue
+        cur.execute(
+            """update fonte_legislativa
+                  set tipo='GAZETA', verificacao='testado',
+                      observacao=%s, verificado_em=current_date
+                where ente_codigo=%s and escopo='gazeta'""",
+            (f"Diário oficial indexado pelo Querido Diário desde {desde[:10]}. "
+             f"Busca em texto completo, sem autenticação. É texto de gazeta, "
+             f"não registro estruturado de leis: extrair a lei exige parsing.",
+             codigo))
+        n += cur.rowcount
+
+    return {"listados_pela_api": len(cidades), "com_diario_disponivel": len(cobertos),
+            "casados_com_nossos_entes": n,
+            "sem_diario": len(nossos) - n}

@@ -105,6 +105,9 @@ export type Projeto = ProjetoBase & {
   norma_ano: number | null; norma_data: string | null;
   autores: Assinante[]; relatores: Assinante[]; trilha: Bloco[];
   movimentacoes_totais: number;
+  ente_codigo: string; ente_nome: string; ente_uf: string | null;
+  ente_nivel: "uniao" | "estado" | "municipio";
+  esfera: "FEDERAL" | "ESTADUAL" | "MUNICIPAL";
   caminho: { marco: Marco; fase: number; rotulo: string; explicacao: string | null }[];
 };
 
@@ -179,3 +182,21 @@ export type MunicipioLinha = {
 export const listarMunicipios = (uf: string) =>
   buscar<MunicipioLinha[]>(`/municipios?uf=${uf}`);
 export const verMunicipio = (ibge: string) => buscar<Municipio>(`/municipio/${ibge}`);
+
+// ------------------------------------------------------------------ fontes
+
+export type FonteLinha = {
+  uf: string | null; nome: string; nivel: string; escopo: string;
+  tipo: "API" | "BULK" | "GAZETA" | "HTML" | "NENHUMA";
+  url: string | null; formato: string | null;
+  verificacao: "testado" | "documentado" | "ausente";
+  tem_tramitacao: boolean; observacao: string | null; verificado_em: string | null;
+};
+export type Fontes = {
+  resumo: { nivel: string; escopo: string; tipo: string; verificacao: string;
+            tem_tramitacao: boolean; entes: number }[];
+  estaduais_e_federal: FonteLinha[];
+  municipal: { com_gazeta: number; sem_gazeta: number };
+};
+
+export const verFontes = () => buscar<Fontes>("/fontes", 3600);

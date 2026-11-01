@@ -50,6 +50,51 @@ FASES = {
 }
 
 # Fim de linha. O projeto parou aqui e nao vai virar lei por este caminho.
+# O caminho tem sete degraus so no Congresso, porque so la existem duas casas.
+# Assembleia legislativa e camara municipal sao unicamerais: o projeto nao vai
+# a casa revisora nenhuma, vai do plenario direto a sancao.
+#
+# Um caminho unico deixaria duas fases que nunca preenchem. A barra de
+# progresso de uma lei estadual mostraria dois degraus impossiveis, e a pessoa
+# leria "faltam quatro etapas" onde faltam duas - exatamente o tipo de erro
+# que esta plataforma existe para nao cometer.
+CAMINHOS: dict[str, tuple[str, ...]] = {
+    "FEDERAL":   ("APRESENTACAO", "COMISSOES", "PLENARIO_ORIGEM", "CASA_REVISORA",
+                  "PLENARIO_REVISORA", "SANCAO", "LEI"),
+    "ESTADUAL":  ("APRESENTACAO", "COMISSOES", "PLENARIO_ORIGEM", "SANCAO", "LEI"),
+    "MUNICIPAL": ("APRESENTACAO", "COMISSOES", "PLENARIO_ORIGEM", "SANCAO", "LEI"),
+}
+
+# Quem sanciona muda com a esfera. Dizer "sancao presidencial" numa lei de
+# camara municipal seria ensinar errado no lugar onde o projeto quer ensinar.
+SANCIONA = {
+    "FEDERAL":   ("o Presidente da República", "Enviado à sanção presidencial"),
+    "ESTADUAL":  ("o Governador", "Enviado à sanção do Governador"),
+    "MUNICIPAL": ("o Prefeito", "Enviado à sanção do Prefeito"),
+}
+
+
+def esfera_de(ente_codigo: str | None) -> str:
+    """'0' e a Uniao; dois digitos, estado; sete digitos, municipio."""
+    c = (ente_codigo or "0").strip()
+    if c == "0":
+        return "FEDERAL"
+    return "MUNICIPAL" if len(c) >= 7 else "ESTADUAL"
+
+
+def fase_de(marco: str | None, esfera: str = "FEDERAL") -> int | None:
+    """A posicao do marco no caminho DAQUELA esfera.
+
+    PROMULGACAO ocupa o lugar da sancao: emenda constitucional e decreto
+    legislativo nao vao ao chefe do Executivo - o proprio Legislativo promulga.
+    """
+    if not marco:
+        return None
+    trilho = CAMINHOS.get(esfera, CAMINHOS["FEDERAL"])
+    alvo = "SANCAO" if marco == "PROMULGACAO" else marco
+    return trilho.index(alvo) + 1 if alvo in trilho else None
+
+
 DESFECHOS = {"LEI", "REJEITADO", "ARQUIVADO", "RETIRADO", "PREJUDICADO", "VETO_TOTAL"}
 
 ROTULOS = {
@@ -132,6 +177,40 @@ EXPLICACOES = {
         "ou a matéria já foi resolvida. Encerra sem votação de mérito."
     ),
 }
+
+# O que muda na explicacao quando a casa e unicameral.
+_UNICAMERAL = {
+    "PLENARIO_ORIGEM": (
+        "O plenário aprovou o texto. Diferente do Congresso, aqui não existe "
+        "segunda casa para revisar — a casa é unicameral, então daqui o texto "
+        "vai direto ao Executivo."
+    ),
+}
+
+
+def caminho_de(esfera: str = "FEDERAL") -> list[dict]:
+    """O trilho completo para a tela desenhar, inclusive as etapas que faltam.
+
+    Mostrar o caminho inteiro, e nao so onde o projeto esta, e o que ensina: a
+    pessoa ve quanto ainda falta e por que a maioria nunca chega ao fim.
+    """
+    quem, rotulo_sancao = SANCIONA.get(esfera, SANCIONA["FEDERAL"])
+    saida: list[dict] = []
+    for i, m in enumerate(CAMINHOS.get(esfera, CAMINHOS["FEDERAL"]), 1):
+        if m == "SANCAO" and esfera != "FEDERAL":
+            rotulo = rotulo_sancao
+            explicacao = (f"O texto vai para {quem}, que pode sancionar ou vetar. "
+                          "O prazo e as regras do veto estão na Constituição do "
+                          "estado ou na Lei Orgânica do município, que seguem o "
+                          "modelo do art. 66 da Constituição Federal.")
+        else:
+            rotulo = ROTULOS[m]
+            explicacao = (_UNICAMERAL.get(m) if esfera != "FEDERAL" else None) \
+                or EXPLICACOES.get(m)
+        saida.append({"marco": m, "fase": i, "rotulo": rotulo,
+                      "explicacao": explicacao})
+    return saida
+
 
 # ------------------------------------------------- camada 1: marco por codigo
 #
@@ -388,7 +467,7 @@ def relator_de(despacho: str | None) -> tuple[str, str] | None:
 
 # ------------------------------------------------------------------- trilha
 
-def trilha(tramitacoes: list[dict]) -> list[dict]:
+def trilha(tramitacoes: list[dict], esfera: str = "FEDERAL") -> list[dict]:
     """Classifica a lista crua e devolve na ordem cronologica.
 
     Nao deduplica: tres pareceres do relator em dias diferentes sao tres
@@ -399,12 +478,15 @@ def trilha(tramitacoes: list[dict]) -> list[dict]:
     for t in tramitacoes:
         m = classifica(t.get("codTipoTramitacao"), t.get("despacho"),
                        t.get("descricaoTramitacao"), t.get("siglaOrgao"))
-        saida.append({**t, "marco": m.nome, "fase": m.fase, "metodo": m.metodo})
+        # A fase vem do caminho da esfera, nao do mapa federal: numa lei
+        # estadual CASA_REVISORA nao existe e tem que sair como None.
+        saida.append({**t, "marco": m.nome, "fase": fase_de(m.nome, esfera),
+                      "metodo": m.metodo})
     saida.sort(key=lambda t: (t.get("dataHora") or "", t.get("sequencia") or 0))
     return saida
 
 
-def agrupa(etapas: list[dict]) -> list[dict]:
+def agrupa(etapas: list[dict], esfera: str = "FEDERAL") -> list[dict]:
     """Colapsa marcos iguais e seguidos num bloco com contagem.
 
     O PL 1087/2025 passa catorze vezes por "Nas comissoes" - sao catorze
@@ -413,14 +495,20 @@ def agrupa(etapas: list[dict]) -> list[dict]:
     "Nas comissoes - 14 movimentacoes, de 04/04 a 01/10". As etapas originais
     continuam dentro, para quem abrir.
     """
+    # Os rotulos e as explicacoes vem do caminho DAQUELA esfera, para a trilha
+    # de uma lei municipal nao dizer "sancao presidencial".
+    porEsfera = {e["marco"]: e for e in caminho_de(esfera)}
     blocos: list[dict] = []
     for e in (x for x in etapas if x.get("marco")):
         if blocos and blocos[-1]["marco"] == e["marco"]:
             blocos[-1]["itens"].append(e)
         else:
+            do_caminho = porEsfera.get(e["marco"], {})
             blocos.append({"marco": e["marco"], "fase": e.get("fase"),
-                           "rotulo": ROTULOS.get(e["marco"], e["marco"]),
-                           "explicacao": EXPLICACOES.get(e["marco"]),
+                           "rotulo": do_caminho.get("rotulo")
+                                     or ROTULOS.get(e["marco"], e["marco"]),
+                           "explicacao": do_caminho.get("explicacao")
+                                         or EXPLICACOES.get(e["marco"]),
                            "itens": [e]})
     for b in blocos:
         b["inicio"] = b["itens"][0].get("dataHora")

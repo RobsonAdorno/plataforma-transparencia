@@ -259,6 +259,38 @@ def votacao_detalhe(votacao_id: int):
         return v
 
 
+@app.get("/fontes")
+def fontes():
+    """O que está coberto e o que não está, por esfera.
+
+    Página de credibilidade. O federal tem API boa; acima disso o Brasil não
+    tem padrão, e esconder isso seria pior que não ter a seção — quem consulta
+    precisa saber que "nenhuma lei estadual aqui" significa "ainda não
+    coletamos", não "o estado não legislou".
+    """
+    with cursor() as cur:
+        cur.execute("""
+            select e.nivel, f.escopo, f.tipo, f.verificacao, f.tem_tramitacao,
+                   count(*) as entes
+              from fonte_legislativa f join ente e on e.codigo_ibge = f.ente_codigo
+             group by 1,2,3,4,5 order by 1, 6 desc""")
+        resumo = cur.fetchall()
+        cur.execute("""
+            select e.uf, e.nome, e.nivel, f.escopo, f.tipo, f.url, f.formato,
+                   f.verificacao, f.tem_tramitacao, f.observacao, f.verificado_em
+              from fonte_legislativa f join ente e on e.codigo_ibge = f.ente_codigo
+             where e.nivel in ('uniao','estado') and f.verificacao <> 'ausente'
+             order by f.verificacao, e.nivel desc, e.uf nulls first""")
+        detalhe = cur.fetchall()
+        cur.execute("""
+            select count(*) filter (where f.verificacao = 'testado')  as com_gazeta,
+                   count(*) filter (where f.verificacao = 'ausente')  as sem_gazeta
+              from fonte_legislativa f join ente e on e.codigo_ibge = f.ente_codigo
+             where e.nivel = 'municipio' and f.escopo = 'gazeta'""")
+        municipal = cur.fetchone()
+    return {"resumo": resumo, "estaduais_e_federal": detalhe, "municipal": municipal}
+
+
 @app.get("/saude")
 def saude():
     """Status das fontes. Vira pagina publica de credibilidade."""
@@ -349,9 +381,12 @@ def lei(proposicao_id: int):
         cur.execute("""
             select p.id, p.tipo, p.numero, p.ano, p.ementa, p.situacao, p.cod_situacao,
                    p.regime, p.apreciacao, p.casa_origem, p.url_integra, p.tramitando,
-                   p.data_apresentacao, p.marco_atual, p.fase_atual,
-                   p.norma_tipo, p.norma_numero, p.norma_ano, p.norma_data
-              from proposicao p where p.id = %s""", (proposicao_id,))
+                   p.data_apresentacao, p.marco_atual, p.fase_atual, p.ente_codigo,
+                   p.norma_tipo, p.norma_numero, p.norma_ano, p.norma_data,
+                   e.nome as ente_nome, e.uf as ente_uf, e.nivel as ente_nivel
+              from proposicao p
+              join ente e on e.codigo_ibge = p.ente_codigo
+             where p.id = %s""", (proposicao_id,))
         base = cur.fetchone()
         if base is None:
             raise HTTPException(404, "proposição não encontrada")
@@ -371,9 +406,10 @@ def lei(proposicao_id: int):
 
     # Agrupar aqui, e nao no front: a regra de "o que e a mesma etapa" e
     # conhecimento do dominio e tem que valer igual na web e no app.
+    esfera = T.esfera_de(base["ente_codigo"])
     blocos = T.agrupa([{**e, "dataHora": (e["data_hora"].isoformat()
                                           if e["data_hora"] else None)}
-                       for e in etapas])
+                       for e in etapas], esfera)
     base["trilha"] = [{k: v for k, v in b.items() if k != "itens"} | {
         "itens": [{"data_hora": i.get("dataHora"), "orgao": i.get("orgao"),
                    "descricao": i.get("descricao"), "despacho": i.get("despacho"),
@@ -381,10 +417,12 @@ def lei(proposicao_id: int):
                    "metodo": i.get("metodo")} for i in b["itens"]]}
         for b in blocos]
     base["movimentacoes_totais"] = len(etapas)
-    base["caminho"] = [{"marco": m, "fase": T.FASES[m], "rotulo": T.ROTULOS[m],
-                        "explicacao": T.EXPLICACOES.get(m)}
-                       for m in ("APRESENTACAO", "COMISSOES", "PLENARIO_ORIGEM",
-                                 "CASA_REVISORA", "PLENARIO_REVISORA", "SANCAO", "LEI")]
+    # O caminho depende da esfera: sete etapas no Congresso, cinco numa
+    # assembleia ou camara municipal, que sao unicamerais. Desenhar sempre
+    # sete faria uma lei estadual parecer ter duas etapas pendentes que nao
+    # existem.
+    base["esfera"] = esfera
+    base["caminho"] = T.caminho_de(esfera)
     return base
 
 

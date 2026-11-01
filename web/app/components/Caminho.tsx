@@ -1,12 +1,18 @@
-// A barra de sete degraus: apresentado -> comissoes -> plenario -> casa
-// revisora -> plenario revisor -> sancao -> lei. Desenhar o caminho inteiro,
-// e nao so o ponto onde o projeto esta, e o que ensina: a pessoa ve quanta
-// coisa ainda falta, e por que a maioria dos projetos nunca chega ao fim.
-export default function Caminho({ fase, morto }: { fase: number | null; morto?: boolean }) {
+// A barra do caminho ate virar lei. O numero de degraus NAO e fixo: sao sete
+// no Congresso, onde o texto passa por duas casas, e cinco numa assembleia
+// estadual ou camara municipal, que sao unicamerais. Fixar em sete faria uma
+// lei estadual parecer ter duas etapas pendentes que nao existem.
+//
+// Desenhar o caminho inteiro, e nao so o ponto onde o projeto esta, e o que
+// ensina: a pessoa ve quanto ainda falta, e por que a maioria nunca chega.
+export default function Caminho(
+  { fase, total = 7, morto }: { fase: number | null; total?: number; morto?: boolean },
+) {
+  const degraus = Array.from({ length: total }, (_, i) => i + 1);
   return (
     <div className="caminho" data-morto={morto ? "" : undefined}
-         role="img" aria-label={`Etapa ${fase ?? 0} de 7 até virar lei`}>
-      {[1, 2, 3, 4, 5, 6, 7].map((n) => (
+         role="img" aria-label={`Etapa ${fase ?? 0} de ${total} até virar lei`}>
+      {degraus.map((n) => (
         <span key={n} data-feito={fase !== null && n <= fase ? "" : undefined} />
       ))}
     </div>
