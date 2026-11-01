@@ -5,7 +5,7 @@ dinheiro público — a partir das fontes oficiais.
 
 Arquitetura e decisões: https://claude.ai/artifact/CqwwuhRpr44FmD6G8MhBoC
 
-## Estado atual — Fases 0 a 5
+## Estado atual — Fases 0 a 6
 
 Pipeline completo, carregando em PostgreSQL:
 
@@ -31,6 +31,10 @@ Pipeline completo, carregando em PostgreSQL:
 | Geometria do mapa | 27 estados, 5.570 municípios, 2,4 MB no total (91 KB por estado, carregados um a um) |
 | Roteamento de reclamação | 40 temas, nas três esferas, com o artigo citado |
 | Escalonamento | 14 passos legais para quando o órgão não responde |
+| Congresso | 513 deputados e 81 senadores, com a Mesa das duas casas |
+| Acervo de 2026 | 3.319 proposições; 10 viraram lei, 26 encerradas, 596 em andamento |
+| Conteúdo de apoio | 8 tipos de proposição explicados e 14 termos de glossário |
+| Procedência | 33 pontos com ⓘ, em 16 telas |
 
 **513 de 513 deputados ligados ao TSE**, sendo 511 por CPF e 2 por nome dentro
 da mesma UF. Fila de revisão vazia.
@@ -463,6 +467,63 @@ A identidade do cidadão fica fora: guardamos o mínimo para notificar e um hash
 com sal para evitar duplicata, e o nome só aparece se a pessoa marcar.
 Reclamação revela onde a pessoa mora e do que ela reclama — é dado sensível,
 não cadastro.
+
+## A aba de Leis
+
+Virou um painel do Congresso, não só uma lista.
+
+**O banner** no topo responde "tem alguma coisa sendo votada?". Tem três
+estados — acontecendo agora, marcado para hoje/amanhã, nada marcado — e o
+terceiro tem texto próprio, porque em recesso e em ano eleitoral o Congresso
+passa semanas parado e um banner que inventa movimento treina a pessoa a
+ignorá-lo.
+
+Ele também distingue **projeto de requerimento**. A primeira versão anunciou
+"REQ 88/2026 está em votação agora", e REQ é requerimento de audiência
+pública, não lei. Agora o panorama ordena os tipos que podem virar norma na
+frente e, quando a pauta só tem requerimento, o banner diz isso em vez de
+chamar requerimento de lei.
+
+**As duas casas**, com interruptor entre elas, a composição por partido e, em
+destaque acima da bancada, **quem preside**. Isso não é enfeite: presidente de
+casa legislativa decide o que entra em pauta, e projeto sem pauta não vira lei
+por mais maioria que tenha. É a parte do processo que menos aparece.
+
+Os 81 senadores vêm do próprio Senado, não do TSE: a casa mistura três
+eleições e inclui suplentes que assumiram, e só ela sabe quem está sentado
+hoje. O cruzamento com os 27 eleitos de 2022 é por nome dentro da UF, porque
+o serviço do Senado não publica CPF — 25 casaram, 56 entraram novos.
+
+### O acervo de 2026
+
+`/leis/acervo` traz as 3.319 proposições do ano em qualquer estado, com busca,
+filtro por tipo e por situação. Inclui o que foi **arquivado, rejeitado,
+retirado e prejudicado** — o destino da maioria, que costuma sumir das telas —
+e para esses mostra **o motivo e quem decidiu**, no despacho oficial, sem
+parafrasear:
+
+> **Prejudicado** · PLEN · 11/08/2026
+> Ato n. 68, de 11/08/2026, do Presidente da Mesa do Congresso Nacional,
+> comunica o encerramento do prazo de vigência da Medida Provisória…
+
+**Uma quarta categoria que precisou existir: "sem tramitação carregada".**
+São 2.687 proposições de 2026 cujo cadastro conhecemos mas cujo histórico
+ainda não baixamos. Contá-las como "em andamento" seria afirmar que andam, e
+não sabemos — a janela de tramitação coletada ainda é curta.
+
+### Até onde vai a explicação
+
+O pedido foi "explicação para qualquer um entender", e a plataforma explica o
+**rito**: o que é um PL e o que é uma PEC, quem pode propor cada um, quantos
+votos exige, se vai à sanção; em que etapa o projeto está; e o que significa
+cada termo de despacho — substitutivo, destaque, prejudicado, sanção tácita.
+São 8 tipos e 14 termos, todos com artigo citado.
+
+O que a plataforma **não** faz é resumir o conteúdo de cada projeto em
+linguagem simples. Para isso seria preciso alguém ler o texto, e resumo
+gerado sem leitura é invenção com cara de síntese. De cada projeto aparece a
+ementa oficial inteira, como o autor escreveu, e o campo de resumo editorial
+fica vazio até uma pessoa escrever.
 
 ## Leis estaduais e municipais
 

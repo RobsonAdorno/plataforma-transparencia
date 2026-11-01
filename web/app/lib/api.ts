@@ -39,9 +39,17 @@ export type DeputadoDetalhe = Deputado & {
   votos_por_tipo: { tipo_voto: string; total: number }[];
   votos_recentes: VotoRecente[];
 };
-export type Congresso = {
-  casa: string; total: number; partidos: { partido: string; cadeiras: number }[];
+export type MembroMesa = {
+  cargo: string; nome: string; partido: string | null; uf: string | null;
+  foto_url: string | null; pessoa_id: number | null; ordem: number;
 };
+export type CasaCongresso = {
+  casa: "camara" | "senado"; nome: string;
+  cadeiras_por_lei: number; total: number;
+  partidos: { partido: string; cadeiras: number }[];
+  presidente: MembroMesa | null; mesa: MembroMesa[];
+};
+export type Congresso = { casas: CasaCongresso[] };
 
 export const listarUfs = () => buscar<Uf[]>("/ufs");
 export const listarDeputados = (uf?: string) =>
@@ -264,3 +272,57 @@ export const ESTADO_RECLAMACAO: Record<EstadoReclamacao, [string, string]> = {
   improcedente: ["Arquivada como improcedente", "var(--muted)"],
   arquivada:    ["Arquivada", "var(--muted)"],
 };
+
+
+// ------------------------------------------------- panorama e acervo de leis
+
+export type NaPauta = ProjetoBase & {
+  evento_id: number; evento: string | null; evento_tipo: string | null;
+  inicio: string; situacao: string; vira_lei: boolean;
+};
+export type Panorama = {
+  quando: "agora" | "hoje" | "amanha" | "depois" | "nada";
+  agora: NaPauta[]; proximas: NaPauta[];
+  contagem: { hoje: number; amanha: number; futuras: number };
+};
+export type Desfecho = {
+  quando: string | null; orgao: string | null; descricao: string | null;
+  despacho: string | null; marco: Marco | null;
+};
+export type NoAcervo = ProjetoBase & {
+  situacao: string | null; data_apresentacao: string | null;
+  norma_tipo: string | null; norma_numero: string | null;
+  norma_ano: number | null; norma_data: string | null;
+  ente_codigo: string; movimentacoes: number;
+  autor: string | null; relator: string | null;
+  agendada: boolean; desfecho: Desfecho | null;
+};
+export type Acervo = {
+  ano: number; total: number; pagina: number; limite: number;
+  resumo: { virou_lei: number; encerrada: number; em_andamento: number;
+            sem_tramitacao: number; total: number };
+  itens: NoAcervo[];
+};
+export type TipoProposicao = {
+  sigla: string; nome: string; o_que_e: string; quem_propoe: string | null;
+  quorum: string | null; vai_a_sancao: boolean; base_legal: string;
+};
+export type TermoGlossario = {
+  termo: string; explicacao: string; base_legal: string | null;
+};
+
+export const verPanorama = () => buscar<Panorama>("/leis/panorama", 60);
+export const verAcervo = (p: {
+  ano?: number; situacao?: string; tipo?: string; busca?: string; pagina?: number;
+} = {}) => {
+  const q = new URLSearchParams();
+  q.set("ano", String(p.ano ?? 2026));
+  if (p.situacao) q.set("situacao", p.situacao);
+  if (p.tipo) q.set("tipo", p.tipo);
+  if (p.busca) q.set("busca", p.busca);
+  if (p.pagina) q.set("pagina", String(p.pagina));
+  return buscar<Acervo>(`/leis/acervo?${q}`, 300);
+};
+export const listarTiposProposicao = () =>
+  buscar<TipoProposicao[]>("/tipos-proposicao", 3600);
+export const verGlossario = () => buscar<TermoGlossario[]>("/glossario", 3600);

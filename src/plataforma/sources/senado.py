@@ -200,3 +200,118 @@ def desfecho_de(det: dict) -> str | None:
     s = (det.get("siglaSituacaoAtual") or "").strip().upper()
     a = (det.get("situacaoAtual") or "").strip().upper()
     return SITUACAO_DESFECHO.get(s) or SITUACAO_DESFECHO.get(a)
+
+
+# ------------------------------------------------- composicao e Mesa do Senado
+
+SENADORES = "senador/lista/atual"
+CARGOS = "senador/{codigo}/cargos"
+# A presidencia do Senado e o cargo de PRESIDENTE na Comissao Diretora (CDIR)
+# com DataFim nula. Nao basta estar na Mesa: sao 11 membros e so um preside.
+CDIR = "CDIR"
+
+
+def _cava(obj, chave):
+    """Desce no JSON atras de uma chave. O Senado aninha fundo e muda o nivel
+    entre servicos; procurar pela chave e mais estavel que fixar o caminho."""
+    if isinstance(obj, dict):
+        if chave in obj:
+            yield obj[chave]
+        for v in obj.values():
+            yield from _cava(v, chave)
+    elif isinstance(obj, list):
+        for v in obj:
+            yield from _cava(v, chave)
+
+
+def senadores() -> list[dict]:
+    """Os 81 em exercicio, com partido, UF e foto.
+
+    O TSE so da os eleitos de cada pleito - 27 em 2022. A composicao real da
+    casa mistura tres eleicoes e inclui suplentes que assumiram, e so o proprio
+    Senado sabe quem esta sentado hoje.
+    """
+    corpo = _get(SENADORES)
+    saida = []
+    for p in next(_cava(corpo, "Parlamentar"), []) or []:
+        i = p.get("IdentificacaoParlamentar") or {}
+        m = (p.get("Mandato") or {})
+        saida.append({
+            "codigo": str(i.get("CodigoParlamentar") or ""),
+            "nome": i.get("NomeParlamentar"),
+            "nome_completo": i.get("NomeCompletoParlamentar"),
+            "partido": i.get("SiglaPartidoParlamentar"),
+            "uf": i.get("UfParlamentar"),
+            "sexo": i.get("SexoParlamentar"),
+            "foto_url": i.get("UrlFotoParlamentar"),
+            "pagina": i.get("UrlPaginaParlamentar"),
+            "na_mesa": (i.get("MembroMesa") or "").strip() == "Sim",
+            "bloco": ((i.get("Bloco") or {}).get("NomeApelido")),
+            "titular": (m.get("DescricaoParticipacao") or ""),
+        })
+    return saida
+
+
+def cargos_de(codigo: str) -> list[dict]:
+    corpo = _get(CARGOS.format(codigo=codigo))
+    bruto = next(_cava(corpo, "Cargo"), []) or []
+    if isinstance(bruto, dict):
+        bruto = [bruto]
+    saida = []
+    for c in bruto:
+        com = c.get("IdentificacaoComissao") or {}
+        saida.append({
+            "cargo": (c.get("DescricaoCargo") or "").strip(),
+            "sigla_orgao": (com.get("SiglaComissao") or "").strip(),
+            "orgao": (com.get("NomeComissao") or "").strip(),
+            "inicio": c.get("DataInicio"),
+            "fim": c.get("DataFim"),
+        })
+    return saida
+
+
+# A Mesa tem 11 membros e a hierarquia nao vem ordenada na fonte.
+#
+# Casar texto fixo nao funciona porque o cargo vem no genero de quem ocupa:
+# "1º SECRETÁRIO" e "1ª SECRETÁRIA" sao o mesmo posto, e a primeira versao
+# mandava as quatro senadoras da Mesa para o fim da lista. A ordem sai do
+# ordinal mais a familia do cargo.
+import re as _re
+
+_ORDINAL = _re.compile(r"(\d)\s*[ºª°]")
+_FAMILIA = (("PRESIDENTE", 0), ("VICE", 1), ("SECRET", 3), ("SUPLENTE", 7))
+
+
+def ordem_do_cargo(cargo: str) -> int:
+    c = (cargo or "").upper()
+    base = next((peso for chave, peso in _FAMILIA if chave in c), 9)
+    if "VICE" in c:
+        base = 1
+    elif "PRESIDENTE" in c:
+        return 1
+    n = _ORDINAL.search(c)
+    posicao = int(n.group(1)) if n else 1
+    return base * 10 + posicao
+
+
+def mesa() -> list[dict]:
+    """Quem ocupa cada cadeira da Mesa Diretora do Senado, hoje.
+
+    Consulta os cargos so dos 11 que a lista marca como membros da Mesa, em
+    vez dos 81: sao 11 requisicoes em vez de 81 para a mesma resposta.
+    """
+    from concurrent.futures import ThreadPoolExecutor
+
+    membros = [s for s in senadores() if s["na_mesa"]]
+
+    def um(s: dict) -> dict:
+        atual = [c for c in cargos_de(s["codigo"])
+                 if c["sigla_orgao"] == CDIR and not c["fim"]]
+        cargo = atual[0]["cargo"] if atual else "Membro da Mesa"
+        return {**s, "cargo": cargo, "inicio": atual[0]["inicio"] if atual else None,
+                "ordem": ordem_do_cargo(cargo)}
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        achados = list(pool.map(um, membros))
+    achados.sort(key=lambda x: (x["ordem"], x["nome"] or ""))
+    return achados

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Abas from "../../components/Abas";
+import Fonte from "../../components/Fonte";
 import CartaoProjeto from "../../components/CartaoProjeto";
 import { verVotadas, dataBr } from "../../lib/api";
 
@@ -19,7 +20,7 @@ export default async function PaginaVotadas() {
            textTransform: "uppercase", color: "var(--accent)", margin: "0 0 12px" }}>
         Leis em movimento
       </p>
-      <h1>O que já foi votado</h1>
+      <h1>O que já foi votado<Fonte chave="camara_api" rotulo="tramitação" /></h1>
       <p className="muted" style={{ maxWidth: "60ch", margin: "12px 0 0" }}>
         Projetos que já passaram por uma votação em plenário. Passar não é
         virar lei: daqui o texto ainda vai à outra casa do Congresso e à sanção

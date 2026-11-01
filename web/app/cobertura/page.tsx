@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Fonte from "../components/Fonte";
 import { verFontes, dataBr } from "../lib/api";
 
 export const revalidate = 3600;
@@ -82,7 +83,7 @@ export default async function PaginaCobertura() {
         mentir sobre o que está pronto para usar.
       </p>
 
-      <h2 style={{ marginTop: 34 }}>Municipal: o buraco de verdade</h2>
+      <h2 style={{ marginTop: 34 }}>Municipal: o buraco de verdade<Fonte chave="querido_diario" rotulo="diários municipais" /></h2>
       <dl className="cartao" style={{ margin: "12px 0 0", padding: "4px 0",
            display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(170px,1fr))" }}>
         {[

@@ -27,6 +27,7 @@ export default async function PaginaReclamacoes() {
         Toda reclamação aqui é pública desde o primeiro dia, com prazo contado.
         As que venceram sem resposta ficam marcadas — silêncio não é dado
         faltando, é o achado.
+        <Fonte chave="lei_13460" rotulo="prazo legal de resposta" />
       </p>
 
       <div className="acoes-painel" style={{ marginTop: 18 }}>

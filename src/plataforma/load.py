@@ -571,8 +571,13 @@ def carrega_eleitos_estaduais(cur, fonte_id: int, ano: int = 2022) -> dict:
                values (%s,%s,%s,%s,%s,'em_exercicio',%s)
                on conflict (pessoa_id, cargo, ente_codigo, legislatura)
                do update set partido = excluded.partido""",
+            # Senador cumpre oito anos, atravessando duas legislaturas: a
+            # legislatura nao identifica o mandato dele. Usar a corrente para
+            # todos evita que a carga do TSE e a do Senado criem duas linhas
+            # para a mesma pessoa - foi o que deu 108 senadores para 81 vagas.
             (pessoa_id, e["cargo"], ente, e["partido"] or None,
-             f"{ano + 1}-{ano + 4}", fonte_id))
+             LEGISLATURA_ATUAL if e["cargo"] == "SENADOR" else f"{ano + 1}-{ano + 4}",
+             fonte_id))
         n_mandato += 1
 
         cur.execute(
@@ -590,3 +595,121 @@ def carrega_eleitos_estaduais(cur, fonte_id: int, ano: int = 2022) -> dict:
     return {"eleitos_no_arquivo": len(els), "pessoas": n_pessoa,
             "mandatos": n_mandato, "sem_ente": n_sem_ente,
             "divergencias": problemas}
+
+
+def _normaliza_nome(s: str | None) -> str:
+    import unicodedata
+    base = "".join(c for c in unicodedata.normalize("NFKD", s or "")
+                   if not unicodedata.combining(c))
+    return " ".join(base.upper().split())
+
+
+def carrega_senado(cur, fonte_id: int) -> dict:
+    """Os 81 senadores em exercicio e a Mesa das duas casas.
+
+    O TSE so entrega os eleitos de cada pleito - 27 em 2022. A composicao real
+    do Senado mistura tres eleicoes e inclui suplentes que assumiram, e so o
+    proprio Senado sabe quem esta sentado hoje. Por isso a fonte aqui e o
+    Senado, e o cruzamento com o TSE e por nome dentro da UF: o servico nao
+    publica CPF.
+    """
+    from .sources import senado
+
+    cur.execute("select uf, codigo_ibge from ente where nivel='estado'")
+    uf_ibge = {r[0]: r[1] for r in cur.fetchall()}
+
+    # Quem ja esta no banco como senador, para nao duplicar quem veio do TSE.
+    cur.execute("""select p.id, p.nome_completo, p.nome_urna, e.uf
+                     from mandato m join pessoa p on p.id = m.pessoa_id
+                     join ente e on e.codigo_ibge = m.ente_codigo
+                    where m.cargo = 'SENADOR'""")
+    existentes: dict[tuple[str, str], int] = {}
+    for pid, completo, urna, uf in cur.fetchall():
+        for nome in (completo, urna):
+            if nome:
+                existentes[(_normaliza_nome(nome), uf)] = pid
+
+    cur.execute("""select id_na_fonte, pessoa_id from identidade_externa
+                    where fonte = 'senado'""")
+    por_codigo = {r[0]: r[1] for r in cur.fetchall()}
+
+    novos = casados = 0
+    for s in senado.senadores():
+        ente = uf_ibge.get(s["uf"])
+        if not ente:
+            continue
+        chave = (_normaliza_nome(s["nome_completo"] or s["nome"]), s["uf"])
+        pessoa_id = por_codigo.get(s["codigo"]) or existentes.get(chave) \
+            or existentes.get((_normaliza_nome(s["nome"]), s["uf"]))
+
+        if pessoa_id is None:
+            cur.execute(
+                """insert into pessoa (nome_completo, nome_urna, foto_url, sexo)
+                   values (%s,%s,%s,%s) returning id""",
+                (s["nome_completo"] or s["nome"], s["nome"], s["foto_url"],
+                 (s["sexo"] or "")[:1] or None))
+            pessoa_id = cur.fetchone()[0]
+            novos += 1
+        else:
+            casados += 1
+            cur.execute("""update pessoa set foto_url = coalesce(%s, foto_url)
+                            where id = %s""", (s["foto_url"], pessoa_id))
+
+        cur.execute(
+            """insert into identidade_externa (fonte, id_na_fonte, pessoa_id,
+                                               metodo, confianca, fonte_registro_id)
+               values ('senado',%s,%s,'id_fonte',1.0,%s)
+               on conflict (fonte, id_na_fonte) do nothing""",
+            (s["codigo"], pessoa_id, fonte_id))
+        cur.execute(
+            """insert into mandato (pessoa_id, cargo, ente_codigo, partido,
+                                    legislatura, situacao, fonte_registro_id)
+               values (%s,'SENADOR',%s,%s,%s,'em_exercicio',%s)
+               on conflict (pessoa_id, cargo, ente_codigo, legislatura)
+               do update set partido = excluded.partido,
+                             situacao = 'em_exercicio'""",
+            (pessoa_id, ente, s["partido"], LEGISLATURA_ATUAL, fonte_id))
+
+    # ------------------------------------------------------------- as Mesas
+    cur.execute("delete from mesa_diretora where data_fim is null")
+    n_mesa = 0
+    for m in senado.mesa():
+        cur.execute(
+            """insert into mesa_diretora (casa, cargo, ordem, pessoa_id, nome,
+                                          partido, uf, foto_url, id_na_fonte,
+                                          data_inicio, fonte_registro_id)
+               values ('senado',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               on conflict (casa, cargo, nome, data_inicio) do nothing""",
+            (m["cargo"], m["ordem"], por_codigo.get(m["codigo"]), m["nome"],
+             m["partido"], m["uf"], m["foto_url"], m["codigo"],
+             _data_br(m.get("inicio")), fonte_id))
+        n_mesa += 1
+
+    cur.execute("""select ie.id_na_fonte, ie.pessoa_id from identidade_externa ie
+                    where ie.fonte = 'camara'""")
+    dep_por_id = {r[0]: r[1] for r in cur.fetchall()}
+    # "Titular" nao e cargo da Mesa: o endpoint repete o presidente com esse
+    # rotulo generico e ele aparecia duas vezes na tela.
+    GENERICOS = {"titular", "membro", ""}
+    for i, m in enumerate(camara.mesa_diretora()):
+        if m.get("dataFim"):
+            continue
+        if (m.get("titulo") or "").strip().lower() in GENERICOS:
+            continue
+        import re as _re
+        uri = _re.search(r"/deputados/(\d+)", m.get("uri") or "")
+        cur.execute(
+            """insert into mesa_diretora (casa, cargo, ordem, pessoa_id, nome,
+                                          partido, uf, foto_url, id_na_fonte,
+                                          data_inicio, fonte_registro_id)
+               values ('camara',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+               on conflict (casa, cargo, nome, data_inicio) do nothing""",
+            (m.get("titulo"), i + 1,
+             dep_por_id.get(uri.group(1)) if uri else None,
+             m.get("nome"), m.get("siglaPartido"), m.get("siglaUf"),
+             m.get("urlFoto"), uri.group(1) if uri else None,
+             _data_br(m.get("dataInicio")), fonte_id))
+        n_mesa += 1
+
+    return {"senadores": novos + casados, "novos": novos,
+            "casados_com_tse": casados, "mesa": n_mesa}

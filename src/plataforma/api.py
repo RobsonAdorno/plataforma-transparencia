@@ -247,16 +247,228 @@ def votacoes(limite: int = Query(20, le=100), apenas_nominais: bool = False):
 
 @app.get("/congresso")
 def congresso():
-    """Composicao por partido, para o hemiciclo."""
+    """As duas casas: composicao por partido e quem preside cada uma.
+
+    Presidente de casa legislativa decide o que entra em pauta, e pauta e
+    poder - um projeto pode ter maioria e nunca ser votado. Mostrar a bancada
+    sem mostrar quem comanda a porta conta meia historia.
+    """
+    casas = []
+    with cursor() as cur:
+        for chave, cargo, nome, total_legal in (
+            ("camara", "DEPUTADO_FEDERAL", "Câmara dos Deputados", 513),
+            ("senado", "SENADOR", "Senado Federal", 81),
+        ):
+            cur.execute("""
+                select m.partido, count(*) as cadeiras
+                  from mandato m
+                 where m.cargo = %s and m.situacao = 'em_exercicio'
+                   and m.partido is not null
+                 group by m.partido order by count(*) desc, m.partido""", (cargo,))
+            partidos = cur.fetchall()
+            cur.execute("""select cargo, nome, partido, uf, foto_url, pessoa_id, ordem
+                             from mesa_diretora
+                            where casa = %s and data_fim is null
+                            order by ordem limit 8""", (chave,))
+            mesa = cur.fetchall()
+            casas.append({
+                "casa": chave, "nome": nome,
+                "cadeiras_por_lei": total_legal,
+                "total": sum(p["cadeiras"] for p in partidos),
+                "partidos": partidos,
+                "presidente": mesa[0] if mesa else None,
+                "mesa": mesa,
+            })
+    return {"casas": casas}
+
+
+# Os tipos que podem virar norma. O resto - requerimento, recurso, indicacao -
+# e instrumento de processo. Um REQ de audiencia publica sendo votado nao e
+# "uma lei sendo votada", e anunciar assim no banner seria mentir no lugar
+# mais visivel da tela.
+TIPOS_LEI = ("PL", "PEC", "PLP", "MPV", "PDL", "PDC", "PLN", "PLV")
+
+
+@app.get("/leis/panorama")
+def leis_panorama():
+    """O que alimenta o banner: o que está sendo votado agora, ou em seguida.
+
+    Responde uma pergunta só — "tem alguma coisa acontecendo?" — e responde
+    com honestidade quando não tem, que é o caso na maior parte do ano.
+
+    Projeto que pode virar lei vem primeiro; requerimento aparece depois e
+    marcado como tal.
+    """
     with cursor() as cur:
         cur.execute("""
-            select m.partido, count(*) as cadeiras
-              from mandato m
-             where m.cargo = 'DEPUTADO_FEDERAL' and m.situacao = 'em_exercicio'
-             group by m.partido order by count(*) desc, m.partido""")
-        partidos = cur.fetchall()
-    total = sum(p["cadeiras"] for p in partidos)
-    return {"casa": "Câmara dos Deputados", "total": total, "partidos": partidos}
+            select e.id as evento_id, e.descricao as evento, e.tipo as evento_tipo,
+                   e.inicio, e.situacao,
+                   p.id, p.tipo, p.numero, p.ano, p.ementa, p.fase_atual,
+                   p.marco_atual, (p.tipo = any(%s)) as vira_lei
+              from evento e
+              join pauta_item pi on pi.evento_id = e.id
+              join proposicao p  on p.id = pi.proposicao_id
+             where e.situacao = 'Em Andamento'
+             order by (p.tipo = any(%s)) desc, pi.ordem nulls last limit 6""",
+                    (list(TIPOS_LEI), list(TIPOS_LEI)))
+        agora = cur.fetchall()
+
+        cur.execute("""
+            select e.id as evento_id, e.descricao as evento, e.tipo as evento_tipo,
+                   e.inicio, e.situacao,
+                   p.id, p.tipo, p.numero, p.ano, p.ementa, p.fase_atual,
+                   p.marco_atual, (p.tipo = any(%s)) as vira_lei
+              from evento e
+              join pauta_item pi on pi.evento_id = e.id
+              join proposicao p  on p.id = pi.proposicao_id
+             where e.inicio > now()
+               and coalesce(e.situacao,'') not in ('Cancelada','Encerrada')
+             order by e.inicio, (p.tipo = any(%s)) desc, pi.ordem nulls last
+             limit 6""", (list(TIPOS_LEI), list(TIPOS_LEI)))
+        proximas = cur.fetchall()
+
+        cur.execute("""
+            select count(*) filter (where e.inicio::date = current_date)      as hoje,
+                   count(*) filter (where e.inicio::date = current_date + 1)  as amanha,
+                   count(*) filter (where e.inicio > now())                   as futuras
+              from evento e
+             where exists (select 1 from pauta_item pi where pi.evento_id = e.id)""")
+        contagem = cur.fetchone()
+
+    quando = ("agora" if agora else
+              "hoje" if contagem["hoje"] else
+              "amanha" if contagem["amanha"] else
+              "depois" if proximas else "nada")
+    return {"quando": quando, "agora": agora, "proximas": proximas,
+            "contagem": contagem}
+
+
+@app.get("/leis/acervo")
+def leis_acervo(ano: int = Query(2026, ge=1988, le=2100),
+                situacao: str | None = None, tipo: str | None = None,
+                busca: str | None = None,
+                limite: int = Query(60, le=300), pagina: int = Query(1, ge=1)):
+    """Todas as proposições de um ano, em qualquer estado.
+
+    Inclui o que foi arquivado, retirado, rejeitado e prejudicado — que é o
+    destino da maioria e normalmente some das telas. Para esses, devolve
+    também o despacho que encerrou e o órgão que decidiu: o pedido era saber
+    o motivo e quem fez.
+    """
+    # 'sem_tramitacao' nao e um estado do projeto: e um estado do NOSSO dado.
+    # A carga de votacoes trouxe milhares de proposicoes so com o cadastro, sem
+    # historico. Contar essas como "em andamento" seria afirmar que andam, e
+    # nao sabemos - a janela de tramitacao coletada ainda e curta.
+    familias = {
+        "virou_lei":       ("LEI",),
+        "em_andamento":    (),
+        "agendada":        (),
+        "sem_tramitacao":  (),
+        "encerrada":       ("ARQUIVADO", "REJEITADO", "RETIRADO",
+                            "PREJUDICADO", "VETO_TOTAL"),
+    }
+    TEM_ETAPA = "exists (select 1 from etapa et where et.proposicao_id = p.id)"
+    if situacao and situacao not in familias:
+        raise HTTPException(400, f"situação inválida: use {', '.join(familias)}")
+
+    onde = ["p.ano = %s"]
+    args: list = [ano]
+    if tipo:
+        onde.append("p.tipo = upper(%s)")
+        args.append(tipo)
+    if busca:
+        onde.append("(p.ementa ilike %s or (p.tipo || ' ' || p.numero) ilike %s)")
+        args += [f"%{busca}%", f"%{busca}%"]
+    if situacao == "virou_lei":
+        onde.append("p.norma_numero is not null")
+    elif situacao == "encerrada":
+        onde.append("p.marco_atual = any(%s) and p.norma_numero is null")
+        args.append(list(familias["encerrada"]))
+    elif situacao == "em_andamento":
+        onde.append(f"p.norma_numero is null and {TEM_ETAPA}"
+                    " and (p.marco_atual is null or p.marco_atual <> all(%s))")
+        args.append(list(familias["encerrada"]))
+    elif situacao == "sem_tramitacao":
+        onde.append(f"not {TEM_ETAPA}")
+    elif situacao == "agendada":
+        onde.append("""exists (select 1 from pauta_item pi
+                                 join evento e on e.id = pi.evento_id
+                                where pi.proposicao_id = p.id and e.inicio > now())""")
+
+    sql = f"""
+        select p.id, p.tipo, p.numero, p.ano, p.ementa, p.situacao,
+               p.marco_atual, p.fase_atual, p.data_apresentacao,
+               p.norma_tipo, p.norma_numero, p.norma_ano, p.norma_data,
+               p.ente_codigo,
+               (select count(*) from etapa et where et.proposicao_id = p.id) as movimentacoes,
+               (select a.nome from autoria_proposicao a
+                 where a.proposicao_id = p.id and a.papel = 'autor'
+                 order by a.ordem nulls last limit 1) as autor,
+               (select a.nome from autoria_proposicao a
+                 where a.proposicao_id = p.id and a.papel = 'relator'
+                 order by a.ordem desc limit 1) as relator,
+               exists (select 1 from pauta_item pi join evento e on e.id = pi.evento_id
+                        where pi.proposicao_id = p.id and e.inicio > now()) as agendada,
+               -- O desfecho com motivo e autor: so para o que encerrou.
+               (select json_build_object('quando', et.data_hora, 'orgao', et.orgao,
+                                         'descricao', et.descricao,
+                                         'despacho', et.despacho, 'marco', et.marco)
+                  from etapa et
+                 where et.proposicao_id = p.id
+                   and et.marco = any(%s)
+                 order by et.data_hora desc limit 1) as desfecho
+          from proposicao p
+         where {' and '.join(onde)}
+         order by coalesce(p.norma_data, p.atualizado_em, p.data_apresentacao) desc nulls last
+         limit %s offset %s"""
+    args_final = [list(familias["encerrada"])] + args + [limite, (pagina - 1) * limite]
+
+    with cursor() as cur:
+        cur.execute(sql, args_final)
+        itens = cur.fetchall()
+        cur.execute(f"select count(*) as total from proposicao p where {' and '.join(onde)}",
+                    args)
+        total = cur.fetchone()["total"]
+        # O resumo por situacao e o que permite a tela oferecer os filtros com
+        # o numero do lado, em vez de filtros que levam a lista vazia.
+        cur.execute("""
+            with base as (
+              select p.*, exists (select 1 from etapa et
+                                   where et.proposicao_id = p.id) as tem_etapa
+                from proposicao p where p.ano = %s
+            )
+            select count(*) filter (where norma_numero is not null) as virou_lei,
+                   count(*) filter (where marco_atual in ('ARQUIVADO','REJEITADO',
+                                      'RETIRADO','PREJUDICADO','VETO_TOTAL')
+                                     and norma_numero is null)      as encerrada,
+                   count(*) filter (where norma_numero is null and tem_etapa
+                                     and (marco_atual is null or marco_atual not in
+                                      ('ARQUIVADO','REJEITADO','RETIRADO',
+                                       'PREJUDICADO','VETO_TOTAL')))  as em_andamento,
+                   count(*) filter (where not tem_etapa)             as sem_tramitacao,
+                   count(*)                                          as total
+              from base""", (ano,))
+        resumo = cur.fetchone()
+    return {"ano": ano, "total": total, "pagina": pagina, "limite": limite,
+            "resumo": resumo, "itens": itens}
+
+
+@app.get("/glossario")
+def glossario():
+    """Os termos que travam a leitura de quem não é do ramo."""
+    with cursor() as cur:
+        cur.execute("select termo, explicacao, base_legal from glossario order by termo")
+        return cur.fetchall()
+
+
+@app.get("/tipos-proposicao")
+def tipos_proposicao():
+    """O que é um PL, uma PEC, uma MPV — e quantos votos cada um exige."""
+    with cursor() as cur:
+        cur.execute("""select sigla, nome, o_que_e, quem_propoe, quorum,
+                              vai_a_sancao, base_legal
+                         from tipo_proposicao order by ordem""")
+        return cur.fetchall()
 
 
 @app.get("/votacoes/{votacao_id}")

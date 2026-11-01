@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Abas from "../../components/Abas";
+import Fonte from "../../components/Fonte";
 import CartaoProjeto from "../../components/CartaoProjeto";
 import { verVotadas, dataBr } from "../../lib/api";
 
@@ -19,7 +20,7 @@ export default async function PaginaNormas() {
            textTransform: "uppercase", color: "var(--accent)", margin: "0 0 12px" }}>
         Leis em movimento
       </p>
-      <h1>Chegaram ao fim: viraram lei</h1>
+      <h1>Chegaram ao fim: viraram lei<Fonte chave="senado_processo" rotulo="norma gerada" /></h1>
       <p className="muted" style={{ maxWidth: "60ch", margin: "12px 0 0" }}>
         Estes atravessaram as sete etapas. De cada um guardamos a trilha inteira,
         com data e despacho, para que daqui a dez anos ainda se possa ver quem

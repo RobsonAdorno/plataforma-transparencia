@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Abas from "../../components/Abas";
+import Fonte from "../../components/Fonte";
 import CartaoProjeto from "../../components/CartaoProjeto";
 import { verAgora, dataHoraBr } from "../../lib/api";
 
@@ -22,7 +23,7 @@ export default async function PaginaAgora() {
            textTransform: "uppercase", color: "var(--accent)", margin: "0 0 12px" }}>
         Leis em movimento
       </p>
-      <h1>Está acontecendo agora</h1>
+      <h1>Está acontecendo agora<Fonte chave="camara_api" rotulo="sessões em andamento" /></h1>
       <p className="muted" style={{ maxWidth: "60ch", margin: "12px 0 0" }}>
         Sessões que a Câmara marcou como em andamento, com as matérias da pauta.
       </p>

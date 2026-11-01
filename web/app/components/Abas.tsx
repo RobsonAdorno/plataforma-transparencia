@@ -1,7 +1,9 @@
 import Link from "next/link";
 
 const ABAS = [
-  ["/leis", "Vão ser votadas"],
+  ["/leis", "Panorama"],
+  ["/leis/acervo", "Todas as leis"],
+  ["/leis/agenda", "Vão ser votadas"],
   ["/leis/agora", "Sendo votadas"],
   ["/leis/votadas", "Já votadas"],
   ["/leis/normas", "Viraram lei"],

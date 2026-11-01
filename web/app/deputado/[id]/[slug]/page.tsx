@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import Link from "next/link";
+import Fonte from "../../../components/Fonte";
 import { notFound } from "next/navigation";
 import { brl, verDeputado } from "../../../lib/api";
 
@@ -65,7 +66,7 @@ export default async function PaginaDeputado({ params }: Props) {
         </div>
       </header>
 
-      <h2 style={{ marginTop: 32 }}>Cota parlamentar · {brl(total)}</h2>
+      <h2 style={{ marginTop: 32 }}>Cota parlamentar · {brl(total)}<Fonte chave="camara_ceap" rotulo="cota parlamentar" /></h2>
       <div className="cartao rolar" style={{ marginTop: 10 }}>
         <table>
           <thead><tr><th>Categoria</th><th className="n">Notas</th><th className="n">Total</th></tr></thead>
@@ -81,7 +82,7 @@ export default async function PaginaDeputado({ params }: Props) {
         </table>
       </div>
 
-      <h2 style={{ marginTop: 32 }}>Notas mais recentes</h2>
+      <h2 style={{ marginTop: 32 }}>Notas mais recentes<Fonte chave="camara_ceap" rotulo="notas fiscais" /></h2>
       <div className="cartao rolar" style={{ marginTop: 10 }}>
         <table>
           <thead><tr><th>Data</th><th>Fornecedor</th><th className="n">Valor</th><th>Documento</th></tr></thead>
@@ -100,7 +101,7 @@ export default async function PaginaDeputado({ params }: Props) {
         </table>
       </div>
 
-      <h2 style={{ marginTop: 32 }}>Votos nominais</h2>
+      <h2 style={{ marginTop: 32 }}>Votos nominais<Fonte chave="camara_api" rotulo="votações nominais" /></h2>
       {d.votos_recentes.length ? (
         <>
           <div className="cartao rolar" style={{ marginTop: 10 }}>

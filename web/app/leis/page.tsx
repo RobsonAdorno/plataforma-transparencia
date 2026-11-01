@@ -1,74 +1,83 @@
 import type { Metadata } from "next";
+import Link from "next/link";
 import Abas from "../components/Abas";
-import CartaoProjeto from "../components/CartaoProjeto";
-import { verAgenda, dataHoraBr } from "../lib/api";
+import Banner from "../components/Banner";
+import Congresso from "../components/Congresso";
+import Fonte from "../components/Fonte";
+import { verPanorama, verCongresso, verAcervo } from "../lib/api";
 
-export const revalidate = 300;
+export const revalidate = 60;
 
 export const metadata: Metadata = {
-  title: "Leis que vão ser votadas",
+  title: "Leis e Congresso",
   description:
-    "O que está marcado para ser votado no Congresso nos próximos dias, com todas as etapas que faltam para cada projeto virar lei.",
+    "O que o Congresso está votando, como ele está composto e o acervo completo das leis de 2026 — em andamento, votadas, arquivadas e agendadas.",
 };
 
-export default async function PaginaAgenda() {
-  const itens = await verAgenda(21);
-  const porDia = new Map<string, typeof itens>();
-  for (const i of itens) {
-    const dia = i.inicio.slice(0, 10);
-    porDia.set(dia, [...(porDia.get(dia) ?? []), i]);
-  }
+const ANO = 2026;
+
+export default async function PaginaLeis() {
+  const [panorama, congresso, acervo] = await Promise.all([
+    verPanorama(), verCongresso(), verAcervo({ ano: ANO, pagina: 1 }),
+  ]);
+  const r = acervo.resumo;
 
   return (
     <div className="wrap" style={{ paddingBlock: "32px 56px" }}>
       <p className="mono" style={{ fontSize: 12, letterSpacing: ".14em",
            textTransform: "uppercase", color: "var(--accent)", margin: "0 0 12px" }}>
-        Leis em movimento
+        Leis e Congresso
       </p>
-      <h1>O que vai ser votado</h1>
-      <p className="muted" style={{ maxWidth: "60ch", margin: "12px 0 0" }}>
-        Cada projeto aqui está marcado para ser apreciado em uma sessão já
-        convocada. Abrindo um deles você vê as sete etapas que um texto precisa
-        atravessar para virar lei — e em qual delas ele está parado.
+      <h1>O que estão decidindo por você</h1>
+
+      <div style={{ marginTop: 20 }}>
+        <Banner p={panorama} />
+      </div>
+
+      <h2 style={{ marginTop: 34 }}>
+        Como o Congresso está composto
+        <Fonte chave="camara_api" rotulo="composição das casas" />
+      </h2>
+      <p className="muted" style={{ fontSize: 14, margin: "8px 0 16px", maxWidth: "62ch" }}>
+        Toda lei federal precisa passar pelas duas casas. Quem preside cada uma
+        decide o que entra em pauta — e projeto sem pauta não vira lei, por
+        mais maioria que tenha.
       </p>
+      <Congresso dados={congresso} />
+
+      <h2 style={{ marginTop: 36 }}>As leis de {ANO}</h2>
+      <div className="grade" style={{ marginTop: 12,
+           gridTemplateColumns: "repeat(auto-fit,minmax(150px,1fr))" }}>
+        {[
+          ["Viraram lei", r.virou_lei, "virou_lei", "var(--accent-ink)"],
+          ["Em andamento", r.em_andamento, "em_andamento", "var(--fg)"],
+          ["Encerradas sem virar lei", r.encerrada, "encerrada", "var(--risk)"],
+          ["Sem tramitação carregada", r.sem_tramitacao, "sem_tramitacao", "var(--muted)"],
+        ].map(([rot, n, filtro, cor]) => (
+          <Link key={String(filtro)} href={`/leis/acervo?situacao=${filtro}`}
+                className="cartao" style={{ padding: 15, textDecoration: "none",
+                                            color: "inherit" }}>
+            <p className="mono" style={{ fontSize: 26, margin: 0,
+                 color: String(cor) }}>
+              {Number(n).toLocaleString("pt-BR")}
+            </p>
+            <p className="muted" style={{ fontSize: 13, margin: "4px 0 0" }}>{rot}</p>
+          </Link>
+        ))}
+      </div>
+      <p className="muted" style={{ fontSize: 13.5, marginTop: 12, maxWidth: "64ch" }}>
+        “Sem tramitação carregada” não é um estado do projeto, é um estado do
+        nosso dado: conhecemos o cadastro dessas proposições mas ainda não
+        baixamos o histórico delas. Contá-las como “em andamento” seria afirmar
+        que andam, e não sabemos.
+      </p>
+
       <Abas atual="/leis" />
-
-      {itens.length === 0 ? (
-        <p className="aviso" style={{ marginTop: 22 }}>
-          Nada marcado para os próximos 21 dias. Em ano eleitoral e durante o
-          recesso a agenda fica vazia por semanas — isso é o calendário do
-          Congresso, não falta de dado.
-        </p>
-      ) : (
-        [...porDia.entries()].map(([dia, lista]) => (
-          <section key={dia} style={{ marginTop: 26 }}>
-            <h2 style={{ fontSize: 17, marginBottom: 10 }}>
-              {new Date(dia + "T12:00:00").toLocaleDateString("pt-BR",
-                { weekday: "long", day: "2-digit", month: "long" })}
-            </h2>
-            <div className="cartao">
-              {lista.map((i) => (
-                <CartaoProjeto key={`${i.id}-${i.inicio}`} id={i.id} tipo={i.tipo}
-                  numero={i.numero} ano={i.ano} ementa={i.ementa}
-                  marco={i.marco_atual} fase={i.fase_atual}
-                  extra={
-                    <p className="mono" style={{ fontSize: 11.5, marginTop: 7,
-                         WebkitLineClamp: "unset" as never, color: "var(--muted)" }}>
-                      {dataHoraBr(i.inicio)} · {i.evento_tipo ?? "sessão"}
-                      {i.regime ? ` · ${i.regime}` : ""}
-                      {i.relator ? ` · relator: ${i.relator}` : ""}
-                    </p>
-                  } />
-              ))}
-            </div>
-          </section>
-        ))
-      )}
-
       <p className="procedencia">
-        Fonte: agenda e pauta da Câmara dos Deputados (API de dados abertos).
-        Pauta publicada muda até a véspera, e matéria em pauta não quer dizer
-        matéria votada — ela pode ser retirada na própria sessão.
+        Fonte: API de dados abertos da Câmara dos Deputados e serviço de
+        processo do Senado Federal. A composição do Senado vem do próprio
+        Senado — o TSE só publica os eleitos de cada pleito, e a casa mistura
+        três eleições.
       </p>
     </div>
   );
